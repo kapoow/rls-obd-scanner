@@ -31,9 +31,9 @@
           <Metric label="Oil" :value="temperature(live.oilTemp)" unit="°C" :warn="live.oilTemp >= 135" />
           <Metric label="Fuel level" :value="percent(live.fuel)" />
           <Metric label="Ignition" :value="ignitionText" />
-          <Metric label="Rated torque" :value="torque(ratedTorque)" />
-          <Metric label="Rated power" :value="decimal(ratedPowerKw, 1)" unit="kW" />
-          <Metric label="Redline" :value="whole(live.redlineRpm)" unit="rpm" />
+          <Metric label="Peak torque" :value="torque(ratedTorque)" />
+          <Metric label="Peak power" :value="decimal(ratedPowerKw, 1)" unit="kW" />
+          <Metric label="ECU limiter" :value="whole(live.ecuLimiterRpm)" unit="rpm" />
         </section>
 
         <Notice v-if="!liveOnline" title="Waiting for vehicle telemetry">
@@ -42,34 +42,41 @@
       </main>
 
       <main v-else-if="tab === 'engine'">
-        <section class="card grid">
-          <Metric label="Rated torque" :value="torque(ratedTorque)" />
-          <Metric label="Rated power" :value="decimal(ratedPowerKw, 1)" unit="kW" />
-          <Metric label="Idle target" :value="whole(live.idleRpm)" unit="rpm" />
-          <Metric label="Combustion quality" :value="roughnessState" :warn="roughnessState !== 'Normal'" />
-          <Metric label="Misfire risk" :value="misfireState" :warn="misfireState !== 'Normal'" />
+        <section class="card specs-card">
+          <h2>Engine specifications</h2>
+          <div class="spec-list">
+            <div v-if="isNumber(ratedPowerKw)"><span>Peak power</span><strong>{{ decimal(ratedPowerKw, 1) }} kW</strong></div>
+            <div v-if="isNumber(ratedTorque)"><span>Peak torque</span><strong>{{ torque(ratedTorque) }}</strong></div>
+            <div v-if="isNumber(live.idleRpm)"><span>Target idle speed</span><strong>{{ whole(live.idleRpm) }} rpm</strong></div>
+          </div>
         </section>
 
         <section v-if="hasEngineLimits" class="card limits-card">
           <h2>Engine limits</h2>
           <div class="limit-list">
-            <div v-if="isNumber(live.mechanicalTorqueRatingNm)">
-              <span>Overtorque threshold</span><strong>{{ torque(live.mechanicalTorqueRatingNm) }}</strong>
+            <div v-if="isNumber(live.ecuLimiterRpm)">
+              <span>ECU rev limiter</span><strong>{{ whole(live.ecuLimiterRpm) }} rpm</strong>
             </div>
             <div v-if="isNumber(live.mechanicalRpmLimit)">
               <span>Mechanical RPM limit</span><strong>{{ whole(live.mechanicalRpmLimit) }} rpm</strong>
             </div>
+            <div v-if="isNumber(live.overtorqueThresholdNm)">
+              <span>Overtorque damage threshold</span><strong>{{ torque(live.overtorqueThresholdNm) }}</strong>
+            </div>
           </div>
-          <p>BeamNG damage threshold reported by the installed engine configuration; not a continuous output rating.</p>
+          <p>Installed ECU setting and mechanical damage limits reported by BeamNG. These are not engine output ratings.</p>
         </section>
 
         <section class="card">
-          <h2>Engine status</h2>
-          <StatusRow v-if="maintenanceOnline" label="Power output" :bad="powerLimited" :text="powerLimitText" />
+          <h2>Diagnostics</h2>
+          <StatusRow v-if="maintenanceOnline" label="Output restriction" :bad="powerLimited" :text="powerLimitText" />
+          <StatusRow v-if="roughnessState" label="Combustion stability" :bad="roughnessState !== 'Normal'" :text="roughnessState" />
+          <StatusRow v-if="misfireState" label="Estimated misfire risk" :bad="misfireState !== 'Normal'" :text="misfireState" />
           <StatusRow v-if="maintenanceOnline || isBoolean(live.pistonRingsDamaged)" label="Piston rings" :bad="pistonRingsDamaged" :text="pistonRingsDamaged ? 'Fault detected' : 'Normal'" />
           <StatusRow v-if="isBoolean(live.headGasketDamaged)" label="Head gasket" :bad="live.headGasketDamaged" :text="live.headGasketDamaged ? 'Fault detected' : 'Normal'" />
           <StatusRow v-if="isBoolean(live.rodBearingsDamaged)" label="Rod bearings" :bad="live.rodBearingsDamaged" :text="live.rodBearingsDamaged ? 'Fault detected' : 'Normal'" />
-          <StatusRow v-if="maintenanceOnline" label="Running condition" :bad="Boolean(engine.activeSymptom)" :text="engine.activeSymptomLabel || 'Normal'" />
+          <StatusRow v-if="isBoolean(live.engineHydrolocked)" label="Hydrolock" :bad="live.engineHydrolocked" :text="live.engineHydrolocked ? 'Fault detected' : 'Normal'" />
+          <StatusRow v-if="maintenanceOnline && engine.activeSymptom" label="Active condition" bad :text="engine.activeSymptomLabel || 'Fault detected'" />
         </section>
       </main>
 
@@ -171,16 +178,16 @@ const liveOnline = computed(() => liveUpdatedAt.value > 0)
 const maintenanceOnline = computed(() => Boolean(maintenance.value.categories))
 const vehicleTitle = computed(() => live.value.vehicleName || (liveOnline.value ? `Vehicle ${live.value.vehicleId}` : 'No connection'))
 const ignitionText = computed(() => live.value.ignition == null ? null : live.value.ignition > 1 ? 'Engine on' : live.value.ignition > 0 ? 'Accessory' : 'Off')
-const rpmPercent = computed(() => live.value.redlineRpm ? Math.min(100, Math.max(0, live.value.rpm / live.value.redlineRpm * 100)) : 0)
+const rpmPercent = computed(() => live.value.ecuLimiterRpm ? Math.min(100, Math.max(0, live.value.rpm / live.value.ecuLimiterRpm * 100)) : 0)
 const temperaturePercent = computed(() => typeof live.value.coolantTemp === 'number' ? Math.min(100, Math.max(0, live.value.coolantTemp / 130 * 100)) : 0)
 const ratedTorque = computed(() => live.value.ratedTorqueNm ?? engine.value.torqueNm)
 const ratedPowerKw = computed(() => live.value.ratedPowerKw ?? (engine.value.powerHp ? engine.value.powerHp * 0.7457 : null))
-const hasEngineLimits = computed(() => isNumber(live.value.mechanicalTorqueRatingNm) || isNumber(live.value.mechanicalRpmLimit))
+const hasEngineLimits = computed(() => isNumber(live.value.ecuLimiterRpm) || isNumber(live.value.mechanicalRpmLimit) || isNumber(live.value.overtorqueThresholdNm))
 const pistonRingsDamaged = computed(() => live.value.pistonRingsDamaged || engine.value.pistonRingsDamaged)
 const powerLimited = computed(() => engine.value.liveMetrics?.powerCapActive === true || radiator.value.liveMetrics?.powerLimitActive === true)
 const powerLimitText = computed(() => powerLimited.value
   ? friendlyLimitReason(engine.value.liveMetrics?.powerLimitReason || radiator.value.liveMetrics?.powerLimitReason)
-  : 'Normal')
+  : 'None')
 const roughnessState = computed(() => elevatedAbove(engine.value.liveMetrics?.roughnessCoef, 1.25))
 const misfireState = computed(() => highIsBadState(engine.value.liveMetrics?.ignitionErrorChance, 0.01, 0.02))
 const shiftQualityState = computed(() => lowIsBadState(transmission.value.liveMetrics?.shiftSpeedCoef ?? transmission.value.shiftSpeedCoef, 0.88, 0.78))
@@ -281,4 +288,5 @@ function dueText(item) {
 
 <style scoped>
 .scanner{--bg:#0b1118;--card:#131d27;--line:#263541;--text:#eef5f3;--muted:#91a3aa;--green:#50e3a4;--amber:#ffbe55;--red:#ff6673;height:100%;overflow-y:auto;overscroll-behavior:contain;padding:3.2rem 14px 28px;background:var(--bg);color:var(--text);font-family:Inter,Arial,sans-serif;box-sizing:border-box}.hero{display:flex;align-items:center;justify-content:space-between;padding:6px 2px 14px}.eyebrow{font-size:9px;letter-spacing:.16em;color:var(--green);font-weight:800}.hero h1{font-size:20px;line-height:1.15;margin:4px 0 0;max-width:210px}.status{font-size:8px;font-weight:900;letter-spacing:.08em;color:var(--muted);border:1px solid var(--line);border-radius:99px;padding:6px 7px}.status.online{color:var(--green);border-color:#287a5a;background:#10271f}.tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:4px;background:#111a23;border-radius:11px;margin-bottom:10px}.tabs button{border:0;background:transparent;color:var(--muted);font-size:9px;font-weight:700;padding:8px 2px;border-radius:8px}.tabs button.active{background:#263541;color:white}.gauges{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}.gauge,.card,.notice{background:var(--card);border:1px solid var(--line);border-radius:13px}.gauge{padding:12px}.gauge span,:deep(.metric span){display:block;color:var(--muted);font-size:10px}.gauge strong{display:inline-block;font-size:25px;margin-top:5px}.gauge small,:deep(.metric small){color:var(--muted);font-size:9px;margin-left:5px}.bar,.service-bar{height:5px;border-radius:5px;background:#263541;overflow:hidden;margin-top:8px}.bar i,.service-bar i{display:block;height:100%;background:var(--green);border-radius:inherit}.bar i.hot{background:var(--red)}.card{padding:12px;margin-bottom:8px}.grid{display:grid;grid-template-columns:1fr 1fr;padding:0}.metric{min-height:64px;padding:11px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);box-sizing:border-box}.metric:nth-child(even){border-right:0}.metric:nth-last-child(-n+2){border-bottom:0}:deep(.metric strong){font-size:15px;display:inline-block;margin-top:7px}.metric.warn :deep(strong){color:var(--red)}.card h2,.card-title{font-size:12px;margin:0 0 10px;font-weight:800}.card-title{display:flex;justify-content:space-between;align-items:center}.limits-card h2{margin-bottom:3px}.limit-list>div{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);font-size:10px}.limit-list>div:last-child{border-bottom:0}.limit-list span{color:var(--muted)}.limit-list strong{text-align:right}.limits-card p,:deep(.notice p){font-size:9px;line-height:1.45;color:var(--muted);margin:8px 0 0}.status-row{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--line);font-size:10px}:deep(.status-row b){text-align:right;color:var(--green)}.status-row.bad :deep(b){color:var(--red)}.notice{padding:13px;margin-bottom:8px;border-color:#5d4b2c;background:#211c14}:deep(.notice b){font-size:11px;color:var(--amber)}.meta-row{display:flex;gap:5px;flex-wrap:wrap;margin:-3px 0 11px}.meta-row span{font-size:8px;text-transform:uppercase;color:var(--muted);background:#0d151d;padding:4px 6px;border-radius:5px}.service-item{margin:11px 0}.service-item>div:first-child{display:flex;justify-content:space-between;font-size:10px}.service-item small{display:block;color:var(--muted);font-size:8px;margin-top:4px}.service-bar i.warn-text{background:var(--amber)}.service-bar i.bad-text{background:var(--red)}.good-text{color:var(--green)}.warn-text{color:var(--amber)}.bad-text{color:var(--red)}.risk{display:flex;flex-direction:column;gap:2px;padding:8px;margin-top:6px;border-left:3px solid var(--amber);background:#211c14;font-size:9px}.risk.high{border-color:var(--red);background:#251418}.risk span{color:var(--muted)}footer{text-align:center;color:#60737b;font-size:8px;padding:10px}
+.spec-list>div{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);font-size:10px}.spec-list>div:last-child{border-bottom:0}.spec-list span{color:var(--muted)}.spec-list strong{text-align:right}
 </style>

@@ -61,27 +61,35 @@ local function buildState()
   local gearbox = getGearbox()
   local clutch = getClutch()
   local thermals = engine and engine.thermals or nil
+  -- Output figures describe the current installed configuration's peak output.
   local ratedTorque = engine and firstNumber(engine.maxTorque, engine.torqueData and engine.torqueData.maxTorque) or nil
-  local mechanicalTorqueRating = engine and firstNumber(
+  -- maxTorqueRating is BeamNG's overtorque damage threshold, not engine output.
+  local overtorqueThreshold = engine and firstNumber(
     engine.maxTorqueRating,
     engine.torqueData and engine.torqueData.maxTorqueRating
   ) or nil
+  -- maxAvailableRPM is the mechanical ceiling; the ECU limiter is independent.
   local mechanicalRpmLimit = engine and firstNumber(
     engine.maxAvailableRPM,
     engine.torqueData and engine.torqueData.maxAvailableRPM
+  ) or nil
+  local ecuLimiterRpm = engine and firstNumber(
+    engine.revLimiterRPM,
+    engine.maxRPM,
+    engine.maxAV and engine.maxAV * 9.549296596
   ) or nil
   return {
     vehicleId = obj:getId(),
     vehicleName = v and v.config and (v.config.name or v.config.model) or nil,
     rpm = firstNumber(ev.rpm, engine and engine.outputAV1 and engine.outputAV1 * 9.549296596),
     idleRpm = engine and engine.idleAV and engine.idleAV * 9.549296596 or nil,
-    redlineRpm = engine and engine.maxAV and engine.maxAV * 9.549296596 or nil,
+    ecuLimiterRpm = ecuLimiterRpm,
     ignition = firstNumber(ev.ignitionLevel, ev.ignition),
     fuel = normalized(ev.fuel),
     coolantTemp = firstNumber(ev.watertemp, ev.coolantTemperature, thermals and thermals.coolantTemperature),
     oilTemp = firstNumber(ev.oiltemp, ev.oilTemperature, thermals and thermals.oilTemperature),
     ratedTorqueNm = ratedTorque,
-    mechanicalTorqueRatingNm = mechanicalTorqueRating,
+    overtorqueThresholdNm = overtorqueThreshold,
     mechanicalRpmLimit = mechanicalRpmLimit,
     ratedPowerKw = engine and powerKw(firstNumber(engine.maxPower, engine.torqueData and engine.torqueData.maxPower)) or nil,
     pistonRingsDamaged = reportedBoolean(thermals, "pistonRingsDamaged"),
