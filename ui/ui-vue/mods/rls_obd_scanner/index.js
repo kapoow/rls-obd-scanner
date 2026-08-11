@@ -4,6 +4,7 @@ const ROUTE = "phone-obd-scanner"
 const VIEW = "/ui/ui-vue/mods/rls_obd_scanner/PhoneObdScanner.vue"
 
 let stopWatch = null
+let stopLayoutEvents = null
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 
@@ -59,19 +60,38 @@ async function addRoute() {
 
 async function injectApp() {
   const mod = await import("@/modules/career/utils/phoneAppRegistry")
+  const { lua, useBridge } = await import("@/bridge")
   if (typeof mod.usePhoneApps !== "function") return false
   const { catalogApps, availableApps } = mod.usePhoneApps()
+  const { events } = useBridge()
   const app = definition()
-  const ensure = list => {
+  let installed = false
+  const ensureCatalog = () => {
+    const list = catalogApps
     if (Array.isArray(list?.value) && !list.value.some(item => item?.id === APP_ID)) list.value.push(app)
   }
-  ensure(catalogApps)
-  ensure(availableApps)
+  const syncAvailable = () => {
+    if (!Array.isArray(availableApps?.value)) return
+    const present = availableApps.value.some(item => item?.id === APP_ID)
+    if (installed && !present) availableApps.value.push(app)
+    if (!installed && present) availableApps.value = availableApps.value.filter(item => item?.id !== APP_ID)
+  }
+  const onLayoutData = data => {
+    installed = Array.isArray(data?.installedAppIds) && data.installedAppIds.includes(APP_ID)
+    ensureCatalog()
+    syncAvailable()
+  }
+  ensureCatalog()
+  syncAvailable()
   stopWatch = window.Vue.watch(
     () => [catalogApps?.value, availableApps?.value],
-    () => { ensure(catalogApps); ensure(availableApps) },
+    () => { ensureCatalog(); syncAvailable() },
     { flush: "post" }
   )
+  events.on('phoneLayoutData', onLayoutData)
+  stopLayoutEvents = () => events.off('phoneLayoutData', onLayoutData)
+  await lua.extensions.load('ui_phone_layout')
+  lua.ui_phone_layout?.requestLayout?.()
   return true
 }
 
@@ -88,5 +108,6 @@ export async function onLoad() {
 
 export async function onUnload() {
   if (stopWatch) { stopWatch(); stopWatch = null }
+  if (stopLayoutEvents) { stopLayoutEvents(); stopLayoutEvents = null }
   if (window.vueRouter?.hasRoute?.(ROUTE)) window.vueRouter.removeRoute(ROUTE)
 }

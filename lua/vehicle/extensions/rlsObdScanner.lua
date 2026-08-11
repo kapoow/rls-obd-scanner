@@ -3,6 +3,8 @@ local M = {}
 
 local UPDATE_INTERVAL = 0.20
 local timer = 0
+local recentClutchHeatSeconds = 0
+local recentClutchHeatPeakC = nil
 
 local function number(value)
   value = tonumber(value)
@@ -175,6 +177,18 @@ local function buildState()
   local engine = getEngine()
   local gearbox = getGearbox()
   local clutch = getClutch()
+  local clutchConfig = v and v.data and v.data.clutch or nil
+  -- Only report a hardware rating when the installed JBeam explicitly defines
+  -- one. Some clutch devices derive lockTorque from engine output at runtime;
+  -- that is not an installed-part torque specification.
+  local clutchRatedTorque = clutchConfig and number(clutchConfig.lockTorque) or nil
+  local clutchAvailableTorque = nil
+  if clutchRatedTorque and clutch then
+    clutchAvailableTorque = math.max(0, (number(clutch.lockTorque) or clutchRatedTorque)
+      * (number(clutch.thermalEfficiency) or 1)
+      * (number(clutch.damageLockTorqueCoef) or 1)
+      * (number(clutch.wearLockTorqueCoef) or 1))
+  end
   local thermals = engine and engine.thermals or nil
   local turbocharger = v and v.data and v.data.turbocharger or nil
   local supercharger = v and v.data and v.data.supercharger or nil
@@ -224,7 +238,12 @@ local function buildState()
     gearboxName = gearboxName,
     forwardGearCount = gearbox and number(gearbox.maxGearIndex) or nil,
     clutchName = clutchName,
-    clutchLockTorqueNm = clutch and number(clutch.lockTorque) or nil,
+    clutchRatedTorqueNm = clutchRatedTorque,
+    clutchAvailableTorqueNm = clutchAvailableTorque,
+    clutchTempC = clutch and number(clutch.clutchTemperature) or nil,
+    clutchWarningTempC = clutch and number(clutch.clutchWarningTemp) or nil,
+    clutchMaxSafeTempC = clutch and number(clutch.clutchMaxSafeTemp) or nil,
+    recentClutchHeatPeakC = recentClutchHeatSeconds > 0 and recentClutchHeatPeakC or nil,
     clutchDamaged = reportedBoolean(clutch, "clutchPermanentlyDamaged"),
     frontDifferential = differentialData("F"),
     centerCoupling = centerCouplingName and {name = centerCouplingName} or nil,
@@ -233,11 +252,22 @@ local function buildState()
 end
 
 local function updateGFX(dt)
-  timer = timer + (number(dt) or 0)
+  local elapsed = number(dt) or 0
+  timer = timer + elapsed
+  recentClutchHeatSeconds = math.max(0, recentClutchHeatSeconds - elapsed)
   if timer < UPDATE_INTERVAL then return end
   timer = 0
   local ev = electrics and electrics.values or {}
   local engine = getEngine()
+  local clutch = getClutch()
+  local clutchTemp = clutch and number(clutch.clutchTemperature) or nil
+  local clutchWarningTemp = clutch and number(clutch.clutchWarningTemp) or nil
+  if clutchTemp and clutchWarningTemp and clutchTemp >= clutchWarningTemp then
+    recentClutchHeatPeakC = math.max(recentClutchHeatPeakC or clutchTemp, clutchTemp)
+    recentClutchHeatSeconds = 300
+  elseif recentClutchHeatSeconds <= 0 then
+    recentClutchHeatPeakC = nil
+  end
   if shouldRequestMil(engine, engine and engine.thermals or nil, ev) then
     -- Only assert the MIL. The native vehicle controller remains responsible for clearing it.
     ev.checkengine = true

@@ -140,13 +140,15 @@
             <div v-if="gearboxDisplayName"><span>Gearbox</span><strong>{{ gearboxDisplayName }}</strong></div>
             <div v-if="isNumber(live.forwardGearCount)"><span>Forward gears</span><strong>{{ whole(live.forwardGearCount) }}</strong></div>
             <div v-if="live.clutchName"><span>Clutch</span><strong>{{ live.clutchName }}</strong></div>
-            <div v-if="isNumber(live.clutchLockTorqueNm)"><span>Current clutch torque capacity</span><strong>{{ torque(live.clutchLockTorqueNm) }}</strong></div>
+            <div v-if="isNumber(live.clutchRatedTorqueNm)"><span>Rated clutch capacity</span><strong>{{ torque(live.clutchRatedTorqueNm) }}</strong></div>
+            <div v-if="clutchCapacityReduced"><span>Available clutch capacity</span><strong>{{ torque(live.clutchAvailableTorqueNm) }}</strong></div>
           </div>
         </section>
 
         <section class="card grid">
           <Metric label="Shift response" :value="shiftQualityState" :warn="shiftQualityState !== 'Normal'" />
           <Metric v-if="hasClutchData" label="Estimated clutch condition" :value="clutchWearState" :warn="clutchWearState !== 'Normal'" />
+          <Metric v-if="hasClutchData && isNumber(live.clutchTempC)" label="Clutch temperature" :value="`${whole(live.clutchTempC)} °C`" :warn="clutchTemperatureHigh" :caution="clutchTemperatureElevated" />
           <Metric label="Fluid quality" :value="percent(transmission.maintenance?.fluidCondition)" />
           <Metric label="Fluid level" :value="percent(transmission.maintenance?.fluidLevel)" />
         </section>
@@ -179,7 +181,7 @@ import { useBridge } from "@/bridge"
 import { useEvents, useStreams } from "@/services/events"
 import PhoneWrapper from "@/modules/career/views/PhoneWrapper.vue"
 
-const Metric = (props) => props.value === null || props.value === undefined || props.value === '' ? null : h('div', { class: ['metric', props.warn && 'warn'] }, [
+const Metric = (props) => props.value === null || props.value === undefined || props.value === '' ? null : h('div', { class: ['metric', props.warn && 'warn', props.caution && 'caution'] }, [
   h('span', props.label), h('strong', props.value), props.unit ? h('small', props.unit) : null,
 ])
 const Notice = (props, { slots }) => h('section', { class: 'notice' }, [h('b', props.title), h('p', slots.default?.())])
@@ -216,6 +218,14 @@ const tabs = [
 useStreams(['rlsObdScannerData', 'vehicleMaintenanceDebugData'], streams => {
   if (streams.rlsObdScannerData) {
     live.value = streams.rlsObdScannerData
+    const clutchTemp = streams.rlsObdScannerData.clutchTempC
+    const warningTemp = streams.rlsObdScannerData.clutchWarningTempC
+    if (isNumber(clutchTemp) && isNumber(warningTemp) && clutchTemp >= warningTemp) {
+      recentSymptoms.value = {
+        ...recentSymptoms.value,
+        clutchHeat: { peakTemp: clutchTemp, observedAt: Date.now() / 1000 },
+      }
+    }
     liveUpdatedAt.value = Date.now()
   }
   if (streams.vehicleMaintenanceDebugData) {
@@ -284,11 +294,12 @@ const clutchWearState = computed(() => highIsBadState(
   transmission.value.liveMetrics?.clutchFreePlayCoef ?? transmission.value.clutchFreePlayCoef,
   1.3, 1.7
 ))
+const clutchTemperatureHigh = computed(() => isNumber(live.value.clutchTempC) && isNumber(live.value.clutchMaxSafeTempC)
+  && live.value.clutchTempC >= live.value.clutchMaxSafeTempC)
+const clutchTemperatureElevated = computed(() => !clutchTemperatureHigh.value && isNumber(live.value.clutchTempC)
+  && isNumber(live.value.clutchWarningTempC) && live.value.clutchTempC >= live.value.clutchWarningTempC)
 const diagnosticFindings = computed(() => buildDiagnosticFindings())
-const hasActiveFault = computed(() => live.value.checkEngine === true || diagnosticFindings.value.some(finding => finding.attention !== false) || [
-  live.value.pistonRingsDamaged, live.value.headGasketDamaged, live.value.rodBearingsDamaged,
-  live.value.engineHydrolocked, live.value.clutchDamaged,
-].some(value => value === true) || [engine.value, radiator.value, transmission.value].some(category => Boolean(category.activeSymptom)))
+const hasActiveFault = computed(() => diagnosticFindings.value.some(finding => finding.attention !== false))
 const hasRecentFinding = computed(() => diagnosticFindings.value.some(finding => finding.recent === true))
 const diagnosticStatusText = computed(() => hasActiveFault.value
   ? 'Attention required'
@@ -302,7 +313,10 @@ const gearboxDisplayName = computed(() => live.value.gearboxName || (
     : transmissionType.value
 ))
 const hasDifferentialData = computed(() => Boolean(live.value.frontDifferential?.name || live.value.centerCoupling?.name || live.value.rearDifferential?.name))
-const hasClutchData = computed(() => Boolean(live.value.clutchName) || isNumber(live.value.clutchLockTorqueNm) || isBoolean(live.value.clutchDamaged))
+const hasClutchData = computed(() => Boolean(live.value.clutchName) || isNumber(live.value.clutchRatedTorqueNm) || isBoolean(live.value.clutchDamaged))
+const clutchCapacityReduced = computed(() => isNumber(live.value.clutchRatedTorqueNm)
+  && isNumber(live.value.clutchAvailableTorqueNm)
+  && live.value.clutchAvailableTorqueNm < live.value.clutchRatedTorqueNm * 0.97)
 const hasDrivetrainStatus = computed(() => isBoolean(live.value.clutchDamaged) || Boolean(
   maintenanceOnline.value && transmission.value.activeSymptom
 ) || diagnosticRisks(transmission.value.riskFlags).length > 0)
@@ -494,6 +508,12 @@ function buildDiagnosticFindings() {
     cause: 'The clutch can no longer transfer torque normally.', effect: 'Slip or loss of drive may occur.',
     action: 'Inspect and replace the clutch assembly.',
   })
+  if (clutchTemperatureHigh.value || clutchTemperatureElevated.value) add({
+    key: 'clutch-temperature', severity: clutchTemperatureHigh.value ? 'high' : 'medium', title: clutchTemperatureHigh.value ? 'Clutch overheating' : 'Clutch temperature high',
+    cause: 'Excessive clutch slip has generated more heat than the clutch can safely dissipate.',
+    effect: clutchTemperatureHigh.value ? 'Continued use may permanently damage the clutch.' : 'Clutch capacity may fall if temperature continues to rise.',
+    action: 'Stop slipping the clutch and allow it to cool. Inspect the clutch if overheating returns frequently.',
+  })
   const activeTransmissionSymptom = transmission.value.activeSymptom
   if (activeTransmissionSymptom) add(transmissionSymptomFinding(activeTransmissionSymptom, true))
   else {
@@ -502,6 +522,22 @@ function buildDiagnosticFindings() {
       add(transmissionSymptomFinding(storedTransmissionSymptom, false))
     }
   }
+  const recentClutchHeatPeak = live.value.recentClutchHeatPeakC ?? recentSymptoms.value.clutchHeat?.peakTemp
+  const clutchHeatAge = Date.now() / 1000 - Number(recentSymptoms.value.clutchHeat?.observedAt || 0)
+  const hasRecentClutchHeat = isNumber(live.value.recentClutchHeatPeakC)
+    || (isNumber(recentClutchHeatPeak) && clutchHeatAge >= 0 && clutchHeatAge <= 300)
+  if (!clutchTemperatureHigh.value && !clutchTemperatureElevated.value && hasRecentClutchHeat) add({
+    key: 'recent-clutch-temperature', severity: 'medium', attention: false, recent: true, title: 'Recent clutch overheating',
+    cause: 'Excessive clutch slip raised temperature above the installed clutch warning threshold.',
+    effect: `Clutch temperature recently reached ${whole(recentClutchHeatPeak)} °C and has since fallen.`,
+    action: 'Allow the clutch to cool fully and inspect it if overheating returns frequently.',
+  })
+  if (live.value.checkEngine === true && !findings.some(finding => finding.attention !== false)) add({
+    key: 'controller-warning', severity: 'medium', title: 'Powertrain warning active',
+    cause: 'The vehicle controller has requested a warning, but no more specific supported cause is currently reported.',
+    effect: 'A dashboard powertrain warning is active.',
+    action: 'Review temperatures and live readings, then inspect the vehicle if the warning persists or returns.',
+  })
   return findings.slice(0, 4)
 }
 function friendlyFindingCause(reason) {
@@ -584,7 +620,7 @@ function dueText(item) {
 </script>
 
 <style scoped>
-.scanner{--bg:#0b1118;--card:#131d27;--line:#263541;--text:#eef5f3;--muted:#91a3aa;--green:#50e3a4;--amber:#ffbe55;--red:#ff6673;height:100%;overflow-y:auto;overscroll-behavior:contain;padding:3.2rem 14px 28px;background:var(--bg);color:var(--text);font-family:Inter,Arial,sans-serif;box-sizing:border-box}.hero{display:flex;align-items:center;justify-content:space-between;padding:6px 2px 14px}.eyebrow{font-size:9px;letter-spacing:.16em;color:var(--green);font-weight:800}.hero h1{font-size:20px;line-height:1.15;margin:4px 0 0;max-width:210px}.status{font-size:8px;font-weight:900;letter-spacing:.08em;color:var(--muted);border:1px solid var(--line);border-radius:99px;padding:6px 7px}.status.online{color:var(--green);border-color:#287a5a;background:#10271f}.tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:4px;background:#111a23;border-radius:11px;margin-bottom:10px}.tabs button{border:0;background:transparent;color:var(--muted);font-size:9px;font-weight:700;padding:8px 2px;border-radius:8px}.tabs button.active{background:#263541;color:white}.gauges{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}.gauge,.card,.notice{background:var(--card);border:1px solid var(--line);border-radius:13px}.gauge{padding:12px}.gauge span,:deep(.metric span){display:block;color:var(--muted);font-size:10px}.gauge strong{display:inline-block;font-size:25px;margin-top:5px}.gauge small,:deep(.metric small){color:var(--muted);font-size:9px;margin-left:5px}.bar,.service-bar{height:5px;border-radius:5px;background:#263541;overflow:hidden;margin-top:8px}.bar i,.service-bar i{display:block;height:100%;background:var(--green);border-radius:inherit}.bar i.hot{background:var(--red)}.card{padding:12px;margin-bottom:8px}.grid{display:grid;grid-template-columns:1fr 1fr;padding:0}.metric{min-height:64px;padding:11px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);box-sizing:border-box}.metric:nth-child(even){border-right:0}.metric:nth-last-child(-n+2){border-bottom:0}:deep(.metric strong){font-size:15px;display:inline-block;margin-top:7px}.metric.warn :deep(strong){color:var(--red)}.card h2,.card-title{font-size:12px;margin:0 0 10px;font-weight:800}.card-title{display:flex;justify-content:space-between;align-items:center}.limits-card h2{margin-bottom:3px}.limit-list>div{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);font-size:10px}.limit-list>div:last-child{border-bottom:0}.limit-list span{color:var(--muted)}.limit-list strong{text-align:right}.limits-card p,:deep(.notice p){font-size:9px;line-height:1.45;color:var(--muted);margin:8px 0 0}.status-row{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--line);font-size:10px}:deep(.status-row b){text-align:right;color:var(--green)}.status-row.warn :deep(b){color:var(--amber)}.status-row.bad :deep(b){color:var(--red)}.notice{padding:13px;margin-bottom:8px;border-color:#5d4b2c;background:#211c14}:deep(.notice b){font-size:11px;color:var(--amber)}.mileage-wear{padding:2px 0 12px;border-bottom:1px solid var(--line)}.mileage-wear>div:first-child{display:flex;justify-content:space-between;font-size:10px}.mileage-wear small{display:block;color:var(--muted);font-size:8px;margin-top:6px}.service-heading{color:var(--muted);font-size:8px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin:12px 0 3px}.service-item{margin:11px 0}.service-item>div:first-child{display:flex;justify-content:space-between;font-size:10px}.service-item small{display:block;color:var(--muted);font-size:8px;margin-top:4px}.service-bar i.warn-text{background:var(--amber)}.service-bar i.bad-text{background:var(--red)}.service-bar i.neutral-text{background:var(--muted)}.good-text{color:var(--green)}.warn-text{color:var(--amber)}.bad-text{color:var(--red)}.neutral-text{color:var(--muted)}.risk{display:flex;flex-direction:column;gap:2px;padding:8px;margin-top:6px;border-left:3px solid var(--amber);background:#211c14;font-size:9px}.risk.high{border-color:var(--red);background:#251418}.risk span{color:var(--muted)}footer{text-align:center;color:#60737b;font-size:8px;padding:10px}
+.scanner{--bg:#0b1118;--card:#131d27;--line:#263541;--text:#eef5f3;--muted:#91a3aa;--green:#50e3a4;--amber:#ffbe55;--red:#ff6673;height:100%;overflow-y:auto;overscroll-behavior:contain;padding:3.2rem 14px 28px;background:var(--bg);color:var(--text);font-family:Inter,Arial,sans-serif;box-sizing:border-box}.hero{display:flex;align-items:center;justify-content:space-between;padding:6px 2px 14px}.eyebrow{font-size:9px;letter-spacing:.16em;color:var(--green);font-weight:800}.hero h1{font-size:20px;line-height:1.15;margin:4px 0 0;max-width:210px}.status{font-size:8px;font-weight:900;letter-spacing:.08em;color:var(--muted);border:1px solid var(--line);border-radius:99px;padding:6px 7px}.status.online{color:var(--green);border-color:#287a5a;background:#10271f}.tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:4px;background:#111a23;border-radius:11px;margin-bottom:10px}.tabs button{border:0;background:transparent;color:var(--muted);font-size:9px;font-weight:700;padding:8px 2px;border-radius:8px}.tabs button.active{background:#263541;color:white}.gauges{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}.gauge,.card,.notice{background:var(--card);border:1px solid var(--line);border-radius:13px}.gauge{padding:12px}.gauge span,:deep(.metric span){display:block;color:var(--muted);font-size:10px}.gauge strong{display:inline-block;font-size:25px;margin-top:5px}.gauge small,:deep(.metric small){color:var(--muted);font-size:9px;margin-left:5px}.bar,.service-bar{height:5px;border-radius:5px;background:#263541;overflow:hidden;margin-top:8px}.bar i,.service-bar i{display:block;height:100%;background:var(--green);border-radius:inherit}.bar i.hot{background:var(--red)}.card{padding:12px;margin-bottom:8px}.grid{display:grid;grid-template-columns:1fr 1fr;padding:0}.metric{min-height:64px;padding:11px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);box-sizing:border-box}.metric:nth-child(even){border-right:0}.metric:nth-last-child(-n+2){border-bottom:0}:deep(.metric strong){font-size:15px;display:inline-block;margin-top:7px}.metric.caution :deep(strong){color:var(--amber)}.metric.warn :deep(strong){color:var(--red)}.card h2,.card-title{font-size:12px;margin:0 0 10px;font-weight:800}.card-title{display:flex;justify-content:space-between;align-items:center}.limits-card h2{margin-bottom:3px}.limit-list>div{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);font-size:10px}.limit-list>div:last-child{border-bottom:0}.limit-list span{color:var(--muted)}.limit-list strong{text-align:right}.limits-card p,:deep(.notice p){font-size:9px;line-height:1.45;color:var(--muted);margin:8px 0 0}.status-row{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--line);font-size:10px}:deep(.status-row b){text-align:right;color:var(--green)}.status-row.warn :deep(b){color:var(--amber)}.status-row.bad :deep(b){color:var(--red)}.notice{padding:13px;margin-bottom:8px;border-color:#5d4b2c;background:#211c14}:deep(.notice b){font-size:11px;color:var(--amber)}.mileage-wear{padding:2px 0 12px;border-bottom:1px solid var(--line)}.mileage-wear>div:first-child{display:flex;justify-content:space-between;font-size:10px}.mileage-wear small{display:block;color:var(--muted);font-size:8px;margin-top:6px}.service-heading{color:var(--muted);font-size:8px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin:12px 0 3px}.service-item{margin:11px 0}.service-item>div:first-child{display:flex;justify-content:space-between;font-size:10px}.service-item small{display:block;color:var(--muted);font-size:8px;margin-top:4px}.service-bar i.warn-text{background:var(--amber)}.service-bar i.bad-text{background:var(--red)}.service-bar i.neutral-text{background:var(--muted)}.good-text{color:var(--green)}.warn-text{color:var(--amber)}.bad-text{color:var(--red)}.neutral-text{color:var(--muted)}.risk{display:flex;flex-direction:column;gap:2px;padding:8px;margin-top:6px;border-left:3px solid var(--amber);background:#211c14;font-size:9px}.risk.high{border-color:var(--red);background:#251418}.risk span{color:var(--muted)}footer{text-align:center;color:#60737b;font-size:8px;padding:10px}
 .scanner::-webkit-scrollbar{width:4px}
 .scanner::-webkit-scrollbar-track{background:transparent}
 .scanner::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:999px}
