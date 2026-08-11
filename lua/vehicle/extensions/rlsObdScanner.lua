@@ -75,6 +75,36 @@ local function findActivePart(slotNeedle, nameNeedle, excludedName)
   return nil
 end
 
+local function findClutchAndFlywheelNames()
+  local activeParts = v and v.data and v.data.activePartsData or nil
+  if type(activeParts) ~= "table" then return nil, nil end
+  local clutchName, clutchScore = nil, 0
+  local flywheelName, flywheelScore = nil, 0
+  for _, part in pairs(activeParts) do
+    local slotType = tostring(type(part) == "table" and part.slotType or ""):lower()
+    local partName = tostring(type(part) == "table" and part.information and part.information.name or "")
+    local lowerName = partName:lower()
+    local isClutchSlot = slotType:find("clutch", 1, true) ~= nil
+    local isFlywheelSlot = slotType:find("flywheel", 1, true) ~= nil
+    local isDifferential = slotType:find("differential", 1, true) ~= nil
+    local isOptionsContainer = lowerName:find("options", 1, true) ~= nil
+    if not isDifferential and not isOptionsContainer and partName ~= "" and (isClutchSlot or isFlywheelSlot) then
+      if lowerName:find("clutch", 1, true) and lowerName ~= "clutch" then
+        local score = (isClutchSlot and 2 or 0) + (isFlywheelSlot and 1 or 0)
+        if score > clutchScore then
+          clutchName, clutchScore = partName, score
+        end
+      elseif lowerName:find("flywheel", 1, true) and lowerName ~= "flywheel" then
+        local score = isFlywheelSlot and 2 or 1
+        if score > flywheelScore then
+          flywheelName, flywheelScore = partName, score
+        end
+      end
+    end
+  end
+  return clutchName, flywheelName
+end
+
 local function finalDriveRatio(axis)
   local _, name = findActivePart("finaldrive_" .. axis:lower(), "final drive")
   if not name then return nil end
@@ -193,7 +223,7 @@ local function buildState()
   local turbocharger = v and v.data and v.data.turbocharger or nil
   local supercharger = v and v.data and v.data.supercharger or nil
   local _, gearboxName = findActivePart("transmission", "transmission")
-  local _, clutchName = findActivePart("", "clutch", "options")
+  local clutchName, flywheelName = findClutchAndFlywheelNames()
   local _, centerCouplingName = findActivePart("transfer_case", nil)
   local _, turbochargerName = findActivePart("", "turbocharger")
   local _, superchargerName = findActivePart("", "supercharger")
@@ -238,6 +268,7 @@ local function buildState()
     gearboxName = gearboxName,
     forwardGearCount = gearbox and number(gearbox.maxGearIndex) or nil,
     clutchName = clutchName,
+    flywheelName = flywheelName,
     clutchRatedTorqueNm = clutchRatedTorque,
     clutchAvailableTorqueNm = clutchAvailableTorque,
     clutchTempC = clutch and number(clutch.clutchTemperature) or nil,

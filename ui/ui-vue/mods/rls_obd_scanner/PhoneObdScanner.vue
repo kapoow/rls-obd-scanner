@@ -140,6 +140,7 @@
             <div v-if="gearboxDisplayName"><span>Gearbox</span><strong>{{ gearboxDisplayName }}</strong></div>
             <div v-if="isNumber(live.forwardGearCount)"><span>Forward gears</span><strong>{{ whole(live.forwardGearCount) }}</strong></div>
             <div v-if="live.clutchName"><span>Clutch</span><strong>{{ live.clutchName }}</strong></div>
+            <div v-if="live.flywheelName"><span>Flywheel</span><strong>{{ live.flywheelName }}</strong></div>
             <div v-if="isNumber(live.clutchRatedTorqueNm)"><span>Rated clutch capacity</span><strong>{{ torque(live.clutchRatedTorqueNm) }}</strong></div>
             <div v-if="clutchCapacityReduced"><span>Available clutch capacity</span><strong>{{ torque(live.clutchAvailableTorqueNm) }}</strong></div>
           </div>
