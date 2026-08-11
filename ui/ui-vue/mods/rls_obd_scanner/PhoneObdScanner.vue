@@ -32,7 +32,7 @@
           <Metric label="Fuel level" :value="percent(live.fuel)" />
           <Metric label="Ignition" :value="ignitionText" />
           <Metric label="Engine load" :value="percent(live.engineLoad)" />
-          <Metric label="Fault scan" :value="faultScanText" :warn="hasActiveFault" />
+          <Metric label="Diagnostic status" :value="diagnosticStatusText" :warn="hasActiveFault" />
           <Metric label="Next service (est.)" :value="nextServiceText" />
         </section>
 
@@ -140,16 +140,15 @@
             <div v-if="gearboxDisplayName"><span>Gearbox</span><strong>{{ gearboxDisplayName }}</strong></div>
             <div v-if="isNumber(live.forwardGearCount)"><span>Forward gears</span><strong>{{ whole(live.forwardGearCount) }}</strong></div>
             <div v-if="live.clutchName"><span>Clutch</span><strong>{{ live.clutchName }}</strong></div>
-            <div v-if="isNumber(live.clutchLockTorqueNm)"><span>Clutch torque capacity</span><strong>{{ torque(live.clutchLockTorqueNm) }}</strong></div>
+            <div v-if="isNumber(live.clutchLockTorqueNm)"><span>Current clutch torque capacity</span><strong>{{ torque(live.clutchLockTorqueNm) }}</strong></div>
           </div>
         </section>
 
         <section class="card grid">
           <Metric label="Shift response" :value="shiftQualityState" :warn="shiftQualityState !== 'Normal'" />
-          <Metric label="Estimated clutch condition" :value="clutchWearState" :warn="clutchWearState !== 'Normal'" />
+          <Metric v-if="hasClutchData" label="Estimated clutch condition" :value="clutchWearState" :warn="clutchWearState !== 'Normal'" />
           <Metric label="Fluid quality" :value="percent(transmission.maintenance?.fluidCondition)" />
           <Metric label="Fluid level" :value="percent(transmission.maintenance?.fluidLevel)" />
-          <Metric label="Transmission integrity" :value="percent(transmission.integrityValue)" />
         </section>
 
         <section v-if="hasDifferentialData" class="card differentials-card">
@@ -290,9 +289,12 @@ const hasActiveFault = computed(() => live.value.checkEngine === true || diagnos
   live.value.pistonRingsDamaged, live.value.headGasketDamaged, live.value.rodBearingsDamaged,
   live.value.engineHydrolocked, live.value.clutchDamaged,
 ].some(value => value === true) || [engine.value, radiator.value, transmission.value].some(category => Boolean(category.activeSymptom)))
-const faultScanText = computed(() => hasActiveFault.value
+const hasRecentFinding = computed(() => diagnosticFindings.value.some(finding => finding.recent === true))
+const diagnosticStatusText = computed(() => hasActiveFault.value
   ? 'Attention required'
-  : (diagnosticFindings.value.length ? 'Advisory stored' : (liveOnline.value ? 'No faults detected' : null)))
+  : (hasRecentFinding.value
+      ? 'Recent event observed'
+      : (diagnosticFindings.value.length ? 'Advisory' : (liveOnline.value ? 'No issues detected' : null))))
 const transmissionType = computed(() => friendlyTransmissionType(live.value.gearboxType))
 const gearboxDisplayName = computed(() => live.value.gearboxName || (
   isNumber(live.value.forwardGearCount) && transmissionType.value
@@ -300,6 +302,7 @@ const gearboxDisplayName = computed(() => live.value.gearboxName || (
     : transmissionType.value
 ))
 const hasDifferentialData = computed(() => Boolean(live.value.frontDifferential?.name || live.value.centerCoupling?.name || live.value.rearDifferential?.name))
+const hasClutchData = computed(() => Boolean(live.value.clutchName) || isNumber(live.value.clutchLockTorqueNm) || isBoolean(live.value.clutchDamaged))
 const hasDrivetrainStatus = computed(() => isBoolean(live.value.clutchDamaged) || Boolean(
   maintenanceOnline.value && transmission.value.activeSymptom
 ) || diagnosticRisks(transmission.value.riskFlags).length > 0)
@@ -401,7 +404,7 @@ function powerLimitAction(reason, cooling) {
   if (reason === 'Old engine top-end loss') return 'No routine service is due. Test engine output or compression; rebuild or replace the worn engine to restore performance.'
   if (reason === 'Oil starvation') return 'Check the oil level and lubrication system before continued operation.'
   if (reason === 'Severe ignition issue') return maintenanceAction(engine.value, 'Inspect and service the ignition system.')
-  if (reason === 'Temporary symptom') return maintenanceAction(engine.value, 'Re-scan under load and inspect the engine if the condition returns.')
+  if (reason === 'Temporary symptom') return maintenanceAction(engine.value, 'Monitor for recurrence and inspect the engine if the condition becomes frequent.')
   return maintenanceAction(engine.value, 'Inspect the engine if the output restriction persists.')
 }
 function recentSymptom(category, categoryName) {
@@ -430,6 +433,7 @@ function transmissionSymptomFinding(symptom, active) {
     key: active ? 'transmission-symptom' : `stored-transmission-${symptom}`,
     severity: 'medium',
     attention: active,
+    recent: !active,
     title: `${active ? 'Active' : 'Intermittent'} ${labels[symptom] || 'transmission condition'}`,
     cause,
     effect: effects[symptom] || 'Shift response or torque transfer may be affected.',

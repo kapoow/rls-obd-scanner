@@ -101,12 +101,16 @@ local function differentialData(axis)
   local device = powertrain and powertrain.getDevice and powertrain.getDevice("differential_" .. axis) or nil
   local part, name = findActivePart("differential_" .. key, "differential")
   if not device and not name then return nil end
+  local differentialName = tostring(name or ""):lower()
+  local hasLimitedSlip = differentialName:find("limited slip", 1, true)
+    or differentialName:find("locking", 1, true)
+    or differentialName:find("welded", 1, true)
   return {
     name = name,
     finalDriveRatio = finalDriveRatio(axis),
     powerLockPercent = displayedTuningValue(part, "Power Lock Rate", device and device.lsdLockCoef),
     coastLockPercent = displayedTuningValue(part, "Coast Lock Rate", device and device.lsdRevLockCoef),
-    preloadNm = device and number(device.lsdPreload) or nil,
+    preloadNm = hasLimitedSlip and device and number(device.lsdPreload) or nil,
   }
 end
 
