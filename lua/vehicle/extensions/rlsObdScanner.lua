@@ -1,4 +1,4 @@
--- Read-only vehicle telemetry provider for the RLS phone scanner.
+-- Vehicle telemetry provider and conservative malfunction-indicator bridge.
 local M = {}
 
 local UPDATE_INTERVAL = 0.20
@@ -52,7 +52,9 @@ end
 
 local function reportedBoolean(container, key)
   if type(container) ~= "table" or container[key] == nil then return nil end
-  return container[key] == true
+  if container[key] == true then return true end
+  local numeric = number(container[key])
+  return numeric ~= nil and numeric ~= 0
 end
 
 local function findActivePart(slotNeedle, nameNeedle, excludedName)
@@ -108,6 +110,62 @@ local function differentialData(axis)
   }
 end
 
+local function maintenanceManagerLoaded()
+  if not extensions then return false end
+  if extensions.isExtensionLoaded then
+    return extensions.isExtensionLoaded("maintenanceManager") == true
+  end
+  return type(maintenanceManager) == "table"
+end
+
+local function maintenanceNeedsAttention()
+  if not maintenanceManagerLoaded() then return false end
+  local manager = extensions and extensions.maintenanceManager or maintenanceManager
+  if type(manager) ~= "table" or type(manager.getSnapshot) ~= "function" then return false end
+
+  local ok, snapshot = pcall(manager.getSnapshot)
+  if not ok or type(snapshot) ~= "table" or type(snapshot.categories) ~= "table" then return false end
+
+  local thresholds = {
+    engine = {oilCondition = 0.55, oilLevel = 0.50, ignitionService = 0.60},
+    radiator = {coolantLevel = 0.55, coolantIntegrity = 0.60},
+  }
+  for categoryName, targets in pairs(thresholds) do
+    local category = snapshot.categories[categoryName]
+    if type(category) == "table" then
+      if category.persistentCareerDamage == true then return true end
+      local maintenance = category.maintenance
+      if type(maintenance) == "table" then
+        for itemName, target in pairs(targets) do
+          local value = number(maintenance[itemName])
+          if value and value <= target then return true end
+        end
+      end
+    end
+  end
+  return false
+end
+
+local function shouldRequestMil(engine, thermals, ev)
+  if not engine then return false end
+
+  local nativeDamage = reportedBoolean(thermals, "pistonRingsDamaged") == true
+    or reportedBoolean(thermals, "headGasketDamaged") == true
+    or reportedBoolean(thermals, "connectingRodBearingsDamaged") == true
+    or reportedBoolean(thermals, "engineHydrolocked") == true
+  if nativeDamage then return true end
+
+  local coolantTemp = firstNumber(ev.watertemp, ev.coolantTemperature, thermals and thermals.coolantTemperature)
+  if coolantTemp and coolantTemp >= 120 then return true end
+
+  local ratedTorque = number(engine.maxTorque)
+  local torqueLimit = number(engine.maxTorqueLimit)
+  local meaningfulRestriction = ratedTorque and ratedTorque > 0 and torqueLimit and torqueLimit < ratedTorque * 0.97
+  -- RLS also reduces output as engines age. Only turn that restriction into a
+  -- dashboard warning when an engine or cooling item is actually service-due.
+  return meaningfulRestriction and maintenanceNeedsAttention()
+end
+
 local function buildState()
   local ev = electrics and electrics.values or {}
   local engine = getEngine()
@@ -115,9 +173,12 @@ local function buildState()
   local clutch = getClutch()
   local thermals = engine and engine.thermals or nil
   local turbocharger = v and v.data and v.data.turbocharger or nil
+  local supercharger = v and v.data and v.data.supercharger or nil
   local _, gearboxName = findActivePart("transmission", "transmission")
   local _, clutchName = findActivePart("", "clutch", "options")
   local _, centerCouplingName = findActivePart("transfer_case", nil)
+  local _, turbochargerName = findActivePart("", "turbocharger")
+  local _, superchargerName = findActivePart("", "supercharger")
   -- Output figures describe the current installed configuration's peak output.
   local ratedTorque = engine and firstNumber(engine.maxTorque, engine.torqueData and engine.torqueData.maxTorque) or nil
   -- maxTorqueRating is BeamNG's overtorque damage threshold, not engine output.
@@ -140,6 +201,8 @@ local function buildState()
     revLimiterType = engine and engine.revLimiterType or nil,
     revLimiterCutTime = engine and number(engine.revLimiterCutTime) or nil,
     wastegateStartPsi = turbocharger and number(turbocharger.wastegateStart) or nil,
+    forcedInductionType = turbocharger and "Turbocharger" or (supercharger and "Supercharger" or nil),
+    forcedInductionName = turbochargerName or superchargerName,
     ignition = firstNumber(ev.ignitionLevel, ev.ignition),
     fuel = normalized(ev.fuel),
     checkEngine = reportedBoolean(ev, "checkengine"),
@@ -169,6 +232,12 @@ local function updateGFX(dt)
   timer = timer + (number(dt) or 0)
   if timer < UPDATE_INTERVAL then return end
   timer = 0
+  local ev = electrics and electrics.values or {}
+  local engine = getEngine()
+  if shouldRequestMil(engine, engine and engine.thermals or nil, ev) then
+    -- Only assert the MIL. The native vehicle controller remains responsible for clearing it.
+    ev.checkengine = true
+  end
   if streams and streams.willSend and streams.willSend("rlsObdScannerData") then
     gui.send("rlsObdScannerData", buildState())
   end

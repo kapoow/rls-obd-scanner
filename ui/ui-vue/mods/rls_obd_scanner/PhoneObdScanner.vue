@@ -36,6 +36,16 @@
           <Metric label="Next service (est.)" :value="nextServiceText" />
         </section>
 
+        <section v-if="diagnosticFindings.length" class="card findings-card">
+          <h2>Diagnostic findings</h2>
+          <article v-for="finding in diagnosticFindings" :key="finding.key" class="finding" :class="finding.severity">
+            <b>{{ finding.title }}</b>
+            <p v-if="finding.cause"><span>Probable cause</span>{{ finding.cause }}</p>
+            <p v-if="finding.effect"><span>Observed effect</span>{{ finding.effect }}</p>
+            <p v-if="finding.action"><span>Recommended action</span>{{ finding.action }}</p>
+          </article>
+        </section>
+
         <Notice v-if="!liveOnline" title="Waiting for vehicle connection">
           Enter a vehicle and keep the phone open to begin the scan.
         </Notice>
@@ -48,6 +58,7 @@
             <div v-if="isNumber(ratedPowerHp)"><span>Peak power</span><strong>{{ whole(ratedPowerHp) }} hk</strong></div>
             <div v-if="isNumber(ratedTorque)"><span>Peak torque</span><strong>{{ torque(ratedTorque) }}</strong></div>
             <div v-if="isNumber(live.idleRpm)"><span>Target idle speed</span><strong>{{ whole(live.idleRpm) }} rpm</strong></div>
+            <div v-if="live.forcedInductionName || live.forcedInductionType"><span>Forced induction</span><strong>{{ live.forcedInductionName || live.forcedInductionType }}</strong></div>
           </div>
         </section>
 
@@ -83,13 +94,9 @@
 
         <section class="card">
           <h2>Diagnostics</h2>
-          <StatusRow v-if="maintenanceOnline" label="Output restriction" :bad="powerLimited" :text="powerLimitText" />
+          <StatusRow v-if="maintenanceOnline" label="Output restriction" :bad="powerLimited && powerLimitReason !== 'Old engine top-end loss'" :warn="powerLimited && powerLimitReason === 'Old engine top-end loss'" :text="powerLimitText" />
           <StatusRow v-if="roughnessState" label="Combustion stability" :bad="roughnessState !== 'Normal'" :text="roughnessState" />
           <StatusRow v-if="misfireState" label="Estimated misfire risk" :bad="misfireState !== 'Normal'" :text="misfireState" />
-          <StatusRow v-if="maintenanceOnline || isBoolean(live.pistonRingsDamaged)" label="Piston rings" :bad="pistonRingsDamaged" :text="pistonRingsDamaged ? 'Fault detected' : 'Normal'" />
-          <StatusRow v-if="isBoolean(live.headGasketDamaged)" label="Head gasket" :bad="live.headGasketDamaged" :text="live.headGasketDamaged ? 'Fault detected' : 'Normal'" />
-          <StatusRow v-if="isBoolean(live.rodBearingsDamaged)" label="Rod bearings" :bad="live.rodBearingsDamaged" :text="live.rodBearingsDamaged ? 'Fault detected' : 'Normal'" />
-          <StatusRow v-if="isBoolean(live.engineHydrolocked)" label="Hydrolock" :bad="live.engineHydrolocked" :text="live.engineHydrolocked ? 'Fault detected' : 'Normal'" />
           <StatusRow v-if="maintenanceOnline && engine.activeSymptom" label="Active condition" bad :text="engine.activeSymptomLabel || 'Fault detected'" />
         </section>
       </main>
@@ -104,14 +111,19 @@
               <span>{{ category.label }}</span>
               <b :class="categoryConditionClass(category.data)">{{ categoryConditionState(category.data) }}</b>
             </div>
-            <div class="meta-row">
-              <span>Condition remaining</span>
-              <span v-if="isNumber(category.data.avgMiles)">Component mileage {{ whole(category.data.avgMiles) }} mi</span>
-              <span v-if="isNumber(category.data.integrityValue)">Mechanical integrity {{ percent(category.data.integrityValue) }}</span>
+            <div v-if="isNumber(category.data.avgMiles)" class="mileage-wear">
+              <div><span>Mileage wear</span><b :style="{ color: mileageWearColor(category.data.avgMiles) }">{{ mileageWearPercent(category.data.avgMiles) }}%</b></div>
+              <div class="service-bar"><i :style="{ width: mileageWearPercent(category.data.avgMiles) + '%', backgroundColor: mileageWearColor(category.data.avgMiles) }"></i></div>
+              <small>{{ whole(category.data.avgMiles) }} mi on installed components</small>
+            </div>
+            <div class="service-heading">Service condition remaining</div>
+            <div v-if="isNumber(category.data.integrityValue) && category.data.integrityValue < 0.999" class="service-item">
+              <div><span>Mechanical integrity</span><b :style="{ color: conditionColor(category.data.integrityValue) }">{{ percent(category.data.integrityValue) }}</b></div>
+              <div class="service-bar"><i :style="{ width: clampPercent(category.data.integrityValue) + '%', backgroundColor: conditionColor(category.data.integrityValue) }"></i></div>
             </div>
             <div v-for="item in category.data.maintenanceItems || []" :key="item.name" class="service-item">
-              <div><span>{{ serviceItemLabel(item) }}</span><b :class="serviceConditionClass(item)">{{ percent(item.value) }}</b></div>
-              <div class="service-bar"><i :class="serviceConditionClass(item)" :style="{ width: clampPercent(item.value) + '%' }"></i></div>
+              <div><span>{{ serviceItemLabel(item) }}</span><b :style="{ color: conditionColor(item.value) }">{{ percent(item.value) }}</b></div>
+              <div class="service-bar"><i :style="{ width: clampPercent(item.value) + '%', backgroundColor: conditionColor(item.value) }"></i></div>
               <small v-if="dueText(item)">{{ dueText(item) }}</small>
             </div>
             <div v-for="risk in diagnosticRisks(category.data.riskFlags)" :key="risk.key" class="risk" :class="risk.severity">
@@ -147,7 +159,7 @@
           <DifferentialBlock label="Rear differential" :data="live.rearDifferential" />
         </section>
 
-        <section class="card">
+        <section v-if="hasDrivetrainStatus" class="card">
           <h2>Drivetrain status</h2>
           <StatusRow v-if="isBoolean(live.clutchDamaged)" label="Clutch" :bad="live.clutchDamaged" :text="live.clutchDamaged ? 'Fault detected' : 'Normal'" />
           <StatusRow v-if="maintenanceOnline && transmission.activeSymptom" label="Active condition" bad :text="transmission.activeSymptomLabel || 'Fault detected'" />
@@ -172,7 +184,7 @@ const Metric = (props) => props.value === null || props.value === undefined || p
   h('span', props.label), h('strong', props.value), props.unit ? h('small', props.unit) : null,
 ])
 const Notice = (props, { slots }) => h('section', { class: 'notice' }, [h('b', props.title), h('p', slots.default?.())])
-const StatusRow = props => h('div', { class: ['status-row', props.bad && 'bad'] }, [h('span', props.label), h('b', props.text)])
+const StatusRow = props => h('div', { class: ['status-row', props.bad && 'bad', props.warn && 'warn'] }, [h('span', props.label), h('b', props.text)])
 const DifferentialBlock = props => {
   const data = props.data
   if (!data?.name) return null
@@ -193,6 +205,7 @@ const events = useEvents()
 const tab = ref('live')
 const live = ref({})
 const maintenance = ref({})
+const recentSymptoms = ref({})
 const liveUpdatedAt = ref(0)
 const displayVehicleName = ref(null)
 
@@ -206,7 +219,16 @@ useStreams(['rlsObdScannerData', 'vehicleMaintenanceDebugData'], streams => {
     live.value = streams.rlsObdScannerData
     liveUpdatedAt.value = Date.now()
   }
-  if (streams.vehicleMaintenanceDebugData) maintenance.value = streams.vehicleMaintenanceDebugData
+  if (streams.vehicleMaintenanceDebugData) {
+    const incoming = streams.vehicleMaintenanceDebugData
+    const observed = { ...recentSymptoms.value }
+    for (const categoryName of ['engine', 'radiator', 'transmission']) {
+      const symptom = incoming.categories?.[categoryName]?.activeSymptom
+      if (symptom) observed[categoryName] = { symptom, observedAt: Date.now() / 1000 }
+    }
+    recentSymptoms.value = observed
+    maintenance.value = incoming
+  }
 })
 
 function connectVehicle() {
@@ -240,11 +262,6 @@ const limiterCutDurationMs = computed(() => limiterStrategyText.value && isNumbe
 const hasEcuCalibration = computed(() => isNumber(live.value.ecuLimiterRpm) || Boolean(limiterStrategyText.value) || isNumber(live.value.wastegateStartPsi))
 const hasEngineLimits = computed(() => isNumber(live.value.overrevThresholdRpm) || isNumber(live.value.overtorqueThresholdNm))
 const pistonRingsDamaged = computed(() => live.value.pistonRingsDamaged || engine.value.pistonRingsDamaged)
-const hasActiveFault = computed(() => live.value.checkEngine === true || [
-  live.value.pistonRingsDamaged, live.value.headGasketDamaged, live.value.rodBearingsDamaged,
-  live.value.engineHydrolocked, live.value.clutchDamaged,
-].some(value => value === true) || [engine.value, radiator.value, transmission.value].some(category => Boolean(category.activeSymptom)))
-const faultScanText = computed(() => hasActiveFault.value ? 'Attention required' : (liveOnline.value ? 'No faults detected' : null))
 const nextServiceMiles = computed(() => {
   const due = maintenanceCategories.value.flatMap(category => category.data.maintenanceItems || [])
     .map(item => item.dueMiles ?? item.serviceDueMilesRemaining)
@@ -253,8 +270,13 @@ const nextServiceMiles = computed(() => {
 })
 const nextServiceText = computed(() => isNumber(nextServiceMiles.value) ? `${whole(nextServiceMiles.value)} mi` : null)
 const powerLimited = computed(() => engine.value.liveMetrics?.powerCapActive === true || radiator.value.liveMetrics?.powerLimitActive === true)
+const powerLimitReason = computed(() => {
+  const cooling = radiator.value.liveMetrics?.powerLimitActive === true
+  const reported = cooling ? radiator.value.liveMetrics?.powerLimitReason : engine.value.liveMetrics?.powerLimitReason
+  return effectivePowerLimitReason(reported)
+})
 const powerLimitText = computed(() => powerLimited.value
-  ? friendlyLimitReason(engine.value.liveMetrics?.powerLimitReason || radiator.value.liveMetrics?.powerLimitReason)
+  ? friendlyLimitReason(powerLimitReason.value)
   : 'None')
 const roughnessState = computed(() => elevatedAbove(engine.value.liveMetrics?.roughnessCoef, 1.25))
 const misfireState = computed(() => highIsBadState(engine.value.liveMetrics?.ignitionErrorChance, 0.01, 0.02))
@@ -263,6 +285,14 @@ const clutchWearState = computed(() => highIsBadState(
   transmission.value.liveMetrics?.clutchFreePlayCoef ?? transmission.value.clutchFreePlayCoef,
   1.3, 1.7
 ))
+const diagnosticFindings = computed(() => buildDiagnosticFindings())
+const hasActiveFault = computed(() => live.value.checkEngine === true || diagnosticFindings.value.some(finding => finding.attention !== false) || [
+  live.value.pistonRingsDamaged, live.value.headGasketDamaged, live.value.rodBearingsDamaged,
+  live.value.engineHydrolocked, live.value.clutchDamaged,
+].some(value => value === true) || [engine.value, radiator.value, transmission.value].some(category => Boolean(category.activeSymptom)))
+const faultScanText = computed(() => hasActiveFault.value
+  ? 'Attention required'
+  : (diagnosticFindings.value.length ? 'Advisory stored' : (liveOnline.value ? 'No faults detected' : null)))
 const transmissionType = computed(() => friendlyTransmissionType(live.value.gearboxType))
 const gearboxDisplayName = computed(() => live.value.gearboxName || (
   isNumber(live.value.forwardGearCount) && transmissionType.value
@@ -270,6 +300,9 @@ const gearboxDisplayName = computed(() => live.value.gearboxName || (
     : transmissionType.value
 ))
 const hasDifferentialData = computed(() => Boolean(live.value.frontDifferential?.name || live.value.centerCoupling?.name || live.value.rearDifferential?.name))
+const hasDrivetrainStatus = computed(() => isBoolean(live.value.clutchDamaged) || Boolean(
+  maintenanceOnline.value && transmission.value.activeSymptom
+) || diagnosticRisks(transmission.value.riskFlags).length > 0)
 const maintenanceCategories = computed(() => [
   { key: 'engine', label: 'Engine', data: engine.value },
   { key: 'radiator', label: 'Cooling', data: radiator.value },
@@ -291,9 +324,23 @@ function serviceConditionSeverity(item) {
   if (item.value <= item.targetValue) return 'warn'
   return 'good'
 }
-function serviceConditionClass(item) {
-  const severity = serviceConditionSeverity(item)
-  return severity ? `${severity}-text` : 'neutral-text'
+function conditionColor(value) {
+  if (!isNumber(value)) return 'var(--muted)'
+  const amount = Math.max(0, Math.min(1, value))
+  const red = [255, 102, 115]
+  const amber = [255, 190, 85]
+  const green = [80, 227, 164]
+  const start = amount < 0.5 ? red : amber
+  const end = amount < 0.5 ? amber : green
+  const mix = amount < 0.5 ? amount * 2 : (amount - 0.5) * 2
+  const channel = index => Math.round(start[index] + (end[index] - start[index]) * mix)
+  return `rgb(${channel(0)}, ${channel(1)}, ${channel(2)})`
+}
+function mileageWearPercent(avgMiles) {
+  return Math.round(Math.max(0, Math.min(1, avgMiles / 250000)) * 100)
+}
+function mileageWearColor(avgMiles) {
+  return conditionColor(1 - mileageWearPercent(avgMiles) / 100)
 }
 function categoryConditionSeverity(category) {
   const severities = (category?.maintenanceItems || []).map(serviceConditionSeverity)
@@ -304,13 +351,14 @@ function categoryConditionSeverity(category) {
 }
 function categoryConditionClass(category) {
   const severity = categoryConditionSeverity(category)
+  if (severity === 'good') return 'neutral-text'
   return severity ? `${severity}-text` : 'neutral-text'
 }
 function categoryConditionState(category) {
   const severity = categoryConditionSeverity(category)
   if (severity === 'bad') return 'Overdue'
   if (severity === 'warn') return 'Service due'
-  if (severity === 'good') return 'Good'
+  if (severity === 'good') return 'No service due'
   return 'Unknown'
 }
 function highIsBadState(value, elevated, high) {
@@ -332,6 +380,137 @@ function lowIsBadState(value, reduced, low) {
 function serviceItemLabel(item) {
   const labels = { coolantIntegrity: 'Coolant condition', fluidCondition: 'Fluid quality' }
   return labels[item?.name] || item?.label || null
+}
+function dueMaintenanceItem(category) {
+  return (category?.maintenanceItems || [])
+    .filter(item => ['warn', 'bad'].includes(serviceConditionSeverity(item)))
+    .sort((a, b) => a.value - b.value)[0] || null
+}
+function maintenanceAction(category, fallback) {
+  const item = dueMaintenanceItem(category)
+  return item?.label ? `Service or inspect ${serviceItemLabel(item).toLowerCase()}.` : fallback
+}
+function effectivePowerLimitReason(reason) {
+  if (reason === 'Maintenance torque protection' && !dueMaintenanceItem(engine.value) && (engine.value.avgMiles || 0) >= 180000) {
+    return 'Old engine top-end loss'
+  }
+  return reason
+}
+function powerLimitAction(reason, cooling) {
+  if (cooling) return maintenanceAction(radiator.value, 'Inspect coolant temperature, level, and the cooling system for faults.')
+  if (reason === 'Old engine top-end loss') return 'No routine service is due. Test engine output or compression; rebuild or replace the worn engine to restore performance.'
+  if (reason === 'Oil starvation') return 'Check the oil level and lubrication system before continued operation.'
+  if (reason === 'Severe ignition issue') return maintenanceAction(engine.value, 'Inspect and service the ignition system.')
+  if (reason === 'Temporary symptom') return maintenanceAction(engine.value, 'Re-scan under load and inspect the engine if the condition returns.')
+  return maintenanceAction(engine.value, 'Inspect the engine if the output restriction persists.')
+}
+function recentSymptom(category, categoryName) {
+  const known = ['roughRunning', 'ticking', 'roughIdle', 'torqueDip', 'powerFade', 'stall', 'coolantSeep', 'fanOverwork', 'roughShift', 'shiftDelay', 'slip']
+  const observed = recentSymptoms.value[categoryName]
+  const type = observed?.symptom || category?.lastFailureType
+  const observedAt = observed?.observedAt || Number(category?.lastFailureTime || 0)
+  const ageSeconds = Date.now() / 1000 - observedAt
+  return known.includes(type) && ageSeconds >= 0 && ageSeconds <= 300 ? type : null
+}
+function transmissionSymptomFinding(symptom, active) {
+  const labels = { roughShift: 'Rough shift', shiftDelay: 'Shift delay', slip: 'Transmission slip' }
+  const effects = {
+    roughShift: 'Gear changes may feel abrupt or harsh.',
+    shiftDelay: 'Gear engagement or shifting may respond more slowly than expected.',
+    slip: 'Engine speed may rise without a matching increase in vehicle speed.',
+  }
+  const dueItem = dueMaintenanceItem(transmission.value)
+  const highMileage = (transmission.value.avgMiles || 0) >= 200000
+  const cause = dueItem
+    ? `${serviceItemLabel(dueItem)} is at or below its service threshold.`
+    : (highMileage
+        ? 'Accumulated transmission mileage can cause intermittent shift-quality changes.'
+        : 'The event may be related to temporary load or temperature conditions.')
+  return {
+    key: active ? 'transmission-symptom' : `stored-transmission-${symptom}`,
+    severity: 'medium',
+    attention: active,
+    title: `${active ? 'Active' : 'Intermittent'} ${labels[symptom] || 'transmission condition'}`,
+    cause,
+    effect: effects[symptom] || 'Shift response or torque transfer may be affected.',
+    action: maintenanceAction(transmission.value, symptom === 'slip'
+      ? 'Inspect the transmission and clutch if slipping returns.'
+      : 'Monitor for recurrence and inspect the transmission if the condition becomes frequent.'),
+  }
+}
+function buildDiagnosticFindings() {
+  const findings = []
+  const add = finding => {
+    if (!findings.some(existing => existing.key === finding.key)) findings.push(finding)
+  }
+
+  if (live.value.engineHydrolocked) add({
+    key: 'hydrolock', severity: 'high', title: 'Engine rotation obstructed',
+    cause: 'Liquid intrusion into a combustion chamber is the likely cause.', effect: 'The engine cannot rotate safely.',
+    action: 'Stop attempting to start the engine and inspect it before further operation.',
+  })
+  if (live.value.rodBearingsDamaged) add({
+    key: 'rod-bearings', severity: 'high', title: 'Severe internal engine damage',
+    cause: 'Bearing or lubrication-system damage is the likely cause.', effect: 'Continued operation may cause complete engine failure.',
+    action: 'Stop the engine and repair the damaged long block.',
+  })
+  if (live.value.headGasketDamaged) add({
+    key: 'head-gasket', severity: 'high', title: 'Combustion/cooling sealing fault',
+    cause: 'Cylinder-head or head-gasket sealing failure is the likely cause.', effect: 'Cooling and combustion performance may be compromised.',
+    action: 'Inspect and repair the cylinder head and gasket.',
+  })
+  if (pistonRingsDamaged.value) add({
+    key: 'piston-rings', severity: 'high', title: 'Cylinder sealing fault suspected',
+    cause: 'Piston-ring or cylinder sealing deterioration is the likely cause.', effect: 'Oil consumption and power loss may increase.',
+    action: 'Inspect compression and repair the engine internals.',
+  })
+  if (powerLimited.value) {
+    const cooling = radiator.value.liveMetrics?.powerLimitActive === true
+    const reason = powerLimitReason.value
+    const ageRelated = reason === 'Old engine top-end loss'
+    add({
+      key: 'output-restriction', severity: cooling ? 'high' : 'medium', attention: !ageRelated,
+      title: ageRelated ? 'Age-related performance loss' : 'Engine output restricted',
+      cause: friendlyFindingCause(reason), effect: 'Available engine torque or power is currently reduced.',
+      action: powerLimitAction(reason, cooling),
+    })
+  }
+  if (!powerLimited.value && engine.value.activeSymptom) add({
+    key: 'engine-symptom', severity: 'medium', title: engine.value.activeSymptomLabel || 'Active engine condition',
+    cause: 'An intermittent engine fault is currently active.', effect: 'Engine response or combustion quality may be affected.',
+    action: maintenanceAction(engine.value, 'Inspect the engine and its service condition.'),
+  })
+  if (radiator.value.activeSymptom && !powerLimited.value) add({
+    key: 'cooling-symptom', severity: 'medium', title: radiator.value.activeSymptomLabel || 'Active cooling-system condition',
+    cause: 'The cooling system has detected an abnormal operating condition.', effect: 'Cooling performance may be reduced.',
+    action: maintenanceAction(radiator.value, 'Inspect the cooling system.'),
+  })
+  if (live.value.clutchDamaged) add({
+    key: 'clutch-damage', severity: 'high', title: 'Clutch damage detected',
+    cause: 'The clutch can no longer transfer torque normally.', effect: 'Slip or loss of drive may occur.',
+    action: 'Inspect and replace the clutch assembly.',
+  })
+  const activeTransmissionSymptom = transmission.value.activeSymptom
+  if (activeTransmissionSymptom) add(transmissionSymptomFinding(activeTransmissionSymptom, true))
+  else {
+    const storedTransmissionSymptom = recentSymptom(transmission.value, 'transmission')
+    if (['roughShift', 'shiftDelay', 'slip'].includes(storedTransmissionSymptom)) {
+      add(transmissionSymptomFinding(storedTransmissionSymptom, false))
+    }
+  }
+  return findings.slice(0, 4)
+}
+function friendlyFindingCause(reason) {
+  const labels = {
+    'Temporary symptom': 'An active engine fault is limiting output.',
+    'Oil starvation': 'Insufficient lubrication is limiting engine output.',
+    'Severe ignition issue': 'Ignition-system condition is limiting engine output.',
+    'Old engine top-end loss': 'Internal engine wear is reducing available output.',
+    'Maintenance torque protection': 'Engine service condition has triggered protective output reduction.',
+    'Catastrophic cooling loss': 'Severe coolant loss has triggered engine protection.',
+    Overheating: 'Excessive engine temperature has triggered engine protection.',
+  }
+  return labels[reason] || 'The powertrain has applied a protective output reduction.'
 }
 function friendlyTransmissionType(value) {
   if (!value) return null
@@ -401,11 +580,12 @@ function dueText(item) {
 </script>
 
 <style scoped>
-.scanner{--bg:#0b1118;--card:#131d27;--line:#263541;--text:#eef5f3;--muted:#91a3aa;--green:#50e3a4;--amber:#ffbe55;--red:#ff6673;height:100%;overflow-y:auto;overscroll-behavior:contain;padding:3.2rem 14px 28px;background:var(--bg);color:var(--text);font-family:Inter,Arial,sans-serif;box-sizing:border-box}.hero{display:flex;align-items:center;justify-content:space-between;padding:6px 2px 14px}.eyebrow{font-size:9px;letter-spacing:.16em;color:var(--green);font-weight:800}.hero h1{font-size:20px;line-height:1.15;margin:4px 0 0;max-width:210px}.status{font-size:8px;font-weight:900;letter-spacing:.08em;color:var(--muted);border:1px solid var(--line);border-radius:99px;padding:6px 7px}.status.online{color:var(--green);border-color:#287a5a;background:#10271f}.tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:4px;background:#111a23;border-radius:11px;margin-bottom:10px}.tabs button{border:0;background:transparent;color:var(--muted);font-size:9px;font-weight:700;padding:8px 2px;border-radius:8px}.tabs button.active{background:#263541;color:white}.gauges{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}.gauge,.card,.notice{background:var(--card);border:1px solid var(--line);border-radius:13px}.gauge{padding:12px}.gauge span,:deep(.metric span){display:block;color:var(--muted);font-size:10px}.gauge strong{display:inline-block;font-size:25px;margin-top:5px}.gauge small,:deep(.metric small){color:var(--muted);font-size:9px;margin-left:5px}.bar,.service-bar{height:5px;border-radius:5px;background:#263541;overflow:hidden;margin-top:8px}.bar i,.service-bar i{display:block;height:100%;background:var(--green);border-radius:inherit}.bar i.hot{background:var(--red)}.card{padding:12px;margin-bottom:8px}.grid{display:grid;grid-template-columns:1fr 1fr;padding:0}.metric{min-height:64px;padding:11px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);box-sizing:border-box}.metric:nth-child(even){border-right:0}.metric:nth-last-child(-n+2){border-bottom:0}:deep(.metric strong){font-size:15px;display:inline-block;margin-top:7px}.metric.warn :deep(strong){color:var(--red)}.card h2,.card-title{font-size:12px;margin:0 0 10px;font-weight:800}.card-title{display:flex;justify-content:space-between;align-items:center}.limits-card h2{margin-bottom:3px}.limit-list>div{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);font-size:10px}.limit-list>div:last-child{border-bottom:0}.limit-list span{color:var(--muted)}.limit-list strong{text-align:right}.limits-card p,:deep(.notice p){font-size:9px;line-height:1.45;color:var(--muted);margin:8px 0 0}.status-row{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--line);font-size:10px}:deep(.status-row b){text-align:right;color:var(--green)}.status-row.bad :deep(b){color:var(--red)}.notice{padding:13px;margin-bottom:8px;border-color:#5d4b2c;background:#211c14}:deep(.notice b){font-size:11px;color:var(--amber)}.meta-row{display:flex;gap:5px;flex-wrap:wrap;margin:-3px 0 11px}.meta-row span{font-size:8px;text-transform:uppercase;color:var(--muted);background:#0d151d;padding:4px 6px;border-radius:5px}.service-item{margin:11px 0}.service-item>div:first-child{display:flex;justify-content:space-between;font-size:10px}.service-item small{display:block;color:var(--muted);font-size:8px;margin-top:4px}.service-bar i.warn-text{background:var(--amber)}.service-bar i.bad-text{background:var(--red)}.service-bar i.neutral-text{background:var(--muted)}.good-text{color:var(--green)}.warn-text{color:var(--amber)}.bad-text{color:var(--red)}.neutral-text{color:var(--muted)}.risk{display:flex;flex-direction:column;gap:2px;padding:8px;margin-top:6px;border-left:3px solid var(--amber);background:#211c14;font-size:9px}.risk.high{border-color:var(--red);background:#251418}.risk span{color:var(--muted)}footer{text-align:center;color:#60737b;font-size:8px;padding:10px}
+.scanner{--bg:#0b1118;--card:#131d27;--line:#263541;--text:#eef5f3;--muted:#91a3aa;--green:#50e3a4;--amber:#ffbe55;--red:#ff6673;height:100%;overflow-y:auto;overscroll-behavior:contain;padding:3.2rem 14px 28px;background:var(--bg);color:var(--text);font-family:Inter,Arial,sans-serif;box-sizing:border-box}.hero{display:flex;align-items:center;justify-content:space-between;padding:6px 2px 14px}.eyebrow{font-size:9px;letter-spacing:.16em;color:var(--green);font-weight:800}.hero h1{font-size:20px;line-height:1.15;margin:4px 0 0;max-width:210px}.status{font-size:8px;font-weight:900;letter-spacing:.08em;color:var(--muted);border:1px solid var(--line);border-radius:99px;padding:6px 7px}.status.online{color:var(--green);border-color:#287a5a;background:#10271f}.tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:4px;background:#111a23;border-radius:11px;margin-bottom:10px}.tabs button{border:0;background:transparent;color:var(--muted);font-size:9px;font-weight:700;padding:8px 2px;border-radius:8px}.tabs button.active{background:#263541;color:white}.gauges{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}.gauge,.card,.notice{background:var(--card);border:1px solid var(--line);border-radius:13px}.gauge{padding:12px}.gauge span,:deep(.metric span){display:block;color:var(--muted);font-size:10px}.gauge strong{display:inline-block;font-size:25px;margin-top:5px}.gauge small,:deep(.metric small){color:var(--muted);font-size:9px;margin-left:5px}.bar,.service-bar{height:5px;border-radius:5px;background:#263541;overflow:hidden;margin-top:8px}.bar i,.service-bar i{display:block;height:100%;background:var(--green);border-radius:inherit}.bar i.hot{background:var(--red)}.card{padding:12px;margin-bottom:8px}.grid{display:grid;grid-template-columns:1fr 1fr;padding:0}.metric{min-height:64px;padding:11px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);box-sizing:border-box}.metric:nth-child(even){border-right:0}.metric:nth-last-child(-n+2){border-bottom:0}:deep(.metric strong){font-size:15px;display:inline-block;margin-top:7px}.metric.warn :deep(strong){color:var(--red)}.card h2,.card-title{font-size:12px;margin:0 0 10px;font-weight:800}.card-title{display:flex;justify-content:space-between;align-items:center}.limits-card h2{margin-bottom:3px}.limit-list>div{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);font-size:10px}.limit-list>div:last-child{border-bottom:0}.limit-list span{color:var(--muted)}.limit-list strong{text-align:right}.limits-card p,:deep(.notice p){font-size:9px;line-height:1.45;color:var(--muted);margin:8px 0 0}.status-row{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--line);font-size:10px}:deep(.status-row b){text-align:right;color:var(--green)}.status-row.warn :deep(b){color:var(--amber)}.status-row.bad :deep(b){color:var(--red)}.notice{padding:13px;margin-bottom:8px;border-color:#5d4b2c;background:#211c14}:deep(.notice b){font-size:11px;color:var(--amber)}.mileage-wear{padding:2px 0 12px;border-bottom:1px solid var(--line)}.mileage-wear>div:first-child{display:flex;justify-content:space-between;font-size:10px}.mileage-wear small{display:block;color:var(--muted);font-size:8px;margin-top:6px}.service-heading{color:var(--muted);font-size:8px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin:12px 0 3px}.service-item{margin:11px 0}.service-item>div:first-child{display:flex;justify-content:space-between;font-size:10px}.service-item small{display:block;color:var(--muted);font-size:8px;margin-top:4px}.service-bar i.warn-text{background:var(--amber)}.service-bar i.bad-text{background:var(--red)}.service-bar i.neutral-text{background:var(--muted)}.good-text{color:var(--green)}.warn-text{color:var(--amber)}.bad-text{color:var(--red)}.neutral-text{color:var(--muted)}.risk{display:flex;flex-direction:column;gap:2px;padding:8px;margin-top:6px;border-left:3px solid var(--amber);background:#211c14;font-size:9px}.risk.high{border-color:var(--red);background:#251418}.risk span{color:var(--muted)}footer{text-align:center;color:#60737b;font-size:8px;padding:10px}
 .scanner::-webkit-scrollbar{width:4px}
 .scanner::-webkit-scrollbar-track{background:transparent}
 .scanner::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:999px}
 .scanner::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.3)}
 .spec-list>div{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);font-size:10px}.spec-list>div:last-child{border-bottom:0}.spec-list span{color:var(--muted)}.spec-list strong{text-align:right}
 :deep(.differential-block){padding:9px 0;border-top:1px solid var(--line)}:deep(.differential-block:first-of-type){border-top:0;padding-top:0}:deep(.differential-block:last-child){padding-bottom:0}:deep(.differential-title){display:flex;justify-content:space-between;gap:10px;font-size:10px}:deep(.differential-title span){color:var(--muted);flex:0 0 auto}:deep(.differential-title strong){max-width:62%;text-align:right}:deep(.differential-settings){display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}:deep(.differential-settings span){display:flex;gap:4px;font-size:8px;color:var(--muted);background:#0d151d;padding:4px 6px;border-radius:5px}:deep(.differential-settings b){color:var(--text)}
+.finding{padding:9px;border-left:3px solid var(--amber);background:#211c14;margin-top:7px}.finding.high{border-color:var(--red);background:#251418}.finding>b{font-size:10px}.finding p{display:grid;grid-template-columns:82px 1fr;gap:6px;font-size:8px;line-height:1.4;margin:6px 0 0;color:var(--text)}.finding p span{color:var(--muted)}
 </style>
