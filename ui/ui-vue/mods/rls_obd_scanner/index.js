@@ -33,7 +33,7 @@ function definition() {
     isUsageUnlocked: true,
     storeTagline: "Live vehicle diagnostics and maintenance data",
     storeDescription:
-      "Read live engine, thermal, drivetrain and RLS maintenance information from the current vehicle.",
+      "View engine, thermal, drivetrain and service information from the current vehicle.",
     lockedMessage: "",
   }
 }
