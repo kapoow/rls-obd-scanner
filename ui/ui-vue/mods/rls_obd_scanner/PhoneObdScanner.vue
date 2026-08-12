@@ -3,10 +3,10 @@
     <div class="scanner">
       <header class="hero">
         <div>
-          <div class="eyebrow">CONNECTED VEHICLE</div>
+          <div class="eyebrow" :class="{ online: scannerConnected, caution: scannerNeedsIgnition }">{{ connectionEyebrow }}</div>
           <h1>{{ vehicleTitle }}</h1>
         </div>
-        <span class="status" :class="{ online: liveOnline }">{{ liveOnline ? 'CONNECTED' : 'WAITING' }}</span>
+        <span class="status" :class="{ online: scannerConnected, caution: scannerNeedsIgnition }">{{ connectionStatus }}</span>
       </header>
 
       <nav class="tabs" aria-label="Scanner sections">
@@ -15,7 +15,11 @@
         </button>
       </nav>
 
-      <main v-if="tab === 'live'">
+      <Notice v-if="!scannerConnected" :title="connectionNoticeTitle">
+        {{ connectionNoticeText }}
+      </Notice>
+
+      <main v-else-if="tab === 'live'">
         <section class="gauges">
           <article v-if="isNumber(live.rpm)" class="gauge">
             <span>Engine speed</span><strong>{{ whole(live.rpm) }}</strong><small>rpm</small>
@@ -46,9 +50,6 @@
           </article>
         </section>
 
-        <Notice v-if="!liveOnline" title="Waiting for vehicle connection">
-          Enter a vehicle and keep the phone open to begin the scan.
-        </Notice>
       </main>
 
       <main v-else-if="tab === 'engine'">
@@ -63,7 +64,7 @@
         </section>
 
         <section v-if="hasEcuCalibration" class="card calibration-card">
-          <h2>ECU calibration</h2>
+          <h2>Engine management</h2>
           <div class="spec-list">
             <div v-if="isNumber(live.ecuLimiterRpm)">
               <span>Rev limiter</span><strong>{{ whole(live.ecuLimiterRpm) }} rpm</strong>
@@ -210,6 +211,7 @@ const maintenance = ref({})
 const recentSymptoms = ref({})
 const liveUpdatedAt = ref(0)
 const displayVehicleName = ref(null)
+const isWalking = ref(null)
 
 const tabs = [
   { id: 'live', label: 'Overview' }, { id: 'engine', label: 'Engine' },
@@ -244,13 +246,17 @@ useStreams(['rlsObdScannerData', 'vehicleMaintenanceDebugData'], streams => {
 function connectVehicle() {
   api.activeObjectLua("extensions.load('rlsObdScanner'); rlsObdScanner.requestState()")
   api.engineLua(`(function()
+    local walking = gameplay_walk and gameplay_walk.isWalking and gameplay_walk.isWalking() or false
     local vehicle = be:getPlayerVehicle(0)
-    if not vehicle then return nil end
+    if walking or not vehicle then return {isWalking = walking, vehicleName = nil} end
     local data = core_vehicles.getModel(vehicle.JBeam)
     local model = data and data.model
-    if not model then return nil end
-    return string.format("%s %s", model.Brand or "", model.Name or "")
-  end)()`, value => { displayVehicleName.value = value || null })
+    local name = model and string.format("%s %s", model.Brand or "", model.Name or "") or nil
+    return {isWalking = false, vehicleName = name}
+  end)()`, value => {
+    isWalking.value = value?.isWalking !== false
+    displayVehicleName.value = value?.vehicleName || null
+  })
 }
 events.on('VehicleReset', connectVehicle)
 events.on('VehicleChange', connectVehicle)
@@ -260,9 +266,16 @@ const engine = computed(() => maintenance.value.categories?.engine || {})
 const radiator = computed(() => maintenance.value.categories?.radiator || {})
 const transmission = computed(() => maintenance.value.categories?.transmission || {})
 const liveOnline = computed(() => liveUpdatedAt.value > 0)
+const ignitionOn = computed(() => isNumber(live.value.ignition) && live.value.ignition >= 2)
+const scannerNeedsIgnition = computed(() => isWalking.value === false && liveOnline.value && !ignitionOn.value)
+const scannerConnected = computed(() => isWalking.value === false && liveOnline.value && ignitionOn.value)
+const connectionEyebrow = computed(() => scannerConnected.value ? 'CONNECTED VEHICLE' : scannerNeedsIgnition.value ? 'VEHICLE DETECTED' : 'VEHICLE SCANNER')
+const connectionStatus = computed(() => scannerConnected.value ? 'CONNECTED' : scannerNeedsIgnition.value ? 'TURN IGNITION ON' : isWalking.value ? 'ENTER VEHICLE' : 'WAITING')
+const connectionNoticeTitle = computed(() => scannerNeedsIgnition.value ? 'Scanner unavailable' : isWalking.value ? 'No vehicle connected' : 'Waiting for vehicle connection')
+const connectionNoticeText = computed(() => scannerNeedsIgnition.value ? 'Turn the ignition on to communicate with the vehicle control modules.' : isWalking.value ? 'Enter a vehicle to connect the scanner.' : 'Waiting for vehicle data.')
 const maintenanceOnline = computed(() => Boolean(maintenance.value.categories))
-const vehicleTitle = computed(() => displayVehicleName.value || live.value.vehicleName || (liveOnline.value ? `Vehicle ${live.value.vehicleId}` : 'No connection'))
-const ignitionText = computed(() => live.value.ignition == null ? null : live.value.ignition > 1 ? 'Engine on' : live.value.ignition > 0 ? 'Accessory' : 'Off')
+const vehicleTitle = computed(() => isWalking.value ? 'No vehicle connected' : displayVehicleName.value || live.value.vehicleName || (liveOnline.value ? `Vehicle ${live.value.vehicleId}` : 'No connection'))
+const ignitionText = computed(() => live.value.engineRunning === true ? 'Engine running' : live.value.ignition == null ? null : live.value.ignition >= 2 ? 'Ignition on' : live.value.ignition > 0 ? 'Accessory' : 'Off')
 const rpmPercent = computed(() => live.value.ecuLimiterRpm ? Math.min(100, Math.max(0, live.value.rpm / live.value.ecuLimiterRpm * 100)) : 0)
 const temperaturePercent = computed(() => typeof live.value.coolantTemp === 'number' ? Math.min(100, Math.max(0, live.value.coolantTemp / 130 * 100)) : 0)
 const ratedTorque = computed(() => live.value.ratedTorqueNm ?? engine.value.torqueNm)
@@ -463,6 +476,14 @@ function buildDiagnosticFindings() {
     if (!findings.some(existing => existing.key === finding.key)) findings.push(finding)
   }
 
+  const recentDamageEvents = Array.isArray(live.value.recentDamageEvents)
+    ? live.value.recentDamageEvents
+    : Object.values(live.value.recentDamageEvents || {})
+  for (const event of recentDamageEvents) {
+    const finding = nativeDamageFinding(event)
+    if (finding) add(finding)
+  }
+
   if (live.value.engineHydrolocked) add({
     key: 'hydrolock', severity: 'high', title: 'Engine rotation obstructed',
     cause: 'Liquid intrusion into a combustion chamber is the likely cause.', effect: 'The engine cannot rotate safely.',
@@ -540,6 +561,43 @@ function buildDiagnosticFindings() {
     action: 'Review temperatures and live readings, then inspect the vehicle if the warning persists or returns.',
   })
   return findings.slice(0, 4)
+}
+function nativeDamageFinding(event) {
+  const definitions = {
+    overRevDanger: ['Engine over-rev observed', 'Engine speed exceeded the mechanical safe limit.', 'Internal engine components may have been overstressed.', 'Avoid further over-revving and inspect the engine if abnormal operation follows.'],
+    mildOverrevDamage: ['Engine over-rev damage', 'BeamNG reported damage caused by excessive engine speed.', 'Engine durability or performance may be reduced.', 'Inspect the engine before further high-speed operation.'],
+    catastrophicOverrevDamage: ['Severe engine over-rev damage', 'Engine speed caused catastrophic internal stress.', 'Major internal engine damage may have occurred.', 'Stop the engine and inspect it before further operation.'],
+    overTorqueDanger: ['Engine overtorque observed', 'Combustion torque exceeded the engine damage threshold.', 'Internal engine components may have been overstressed.', 'Reduce load and inspect the engine if abnormal operation follows.'],
+    catastrophicOverTorqueDamage: ['Severe engine overtorque damage', 'BeamNG reported catastrophic damage from excessive torque.', 'Major internal engine damage may have occurred.', 'Stop the engine and inspect it before further operation.'],
+    coolantOverheating: ['Coolant overheating', 'Coolant temperature exceeded the vehicle warning threshold.', 'Continued operation may damage the cooling system or engine.', 'Reduce load, stop safely, and allow the engine to cool.'],
+    oilOverheating: ['Engine oil overheating', 'Oil temperature exceeded the vehicle warning threshold.', 'Lubrication performance may be reduced.', 'Reduce load and allow the engine oil to cool.'],
+    starvedOfOil: ['Oil starvation observed', 'BeamNG reported insufficient oil supply under the current vehicle motion.', 'Engine bearings may have received inadequate lubrication.', 'Stop severe manoeuvres and inspect oil level if the warning returns.'],
+    oilLevelCritical: ['Critical engine oil level', 'The engine reported an unsafe oil quantity.', 'Lubrication loss may cause rapid engine damage.', 'Stop the engine and correct the oil level before continued operation.'],
+    oilLevelTooHigh: ['Engine oil level too high', 'The engine reported excessive oil quantity.', 'Lubrication and crankcase operation may be affected.', 'Correct the oil level before continued operation.'],
+    engineIsHydrolocking: ['Hydrolock risk observed', 'Liquid intrusion obstructed engine rotation.', 'Further starting attempts may cause severe internal damage.', 'Stop attempting to start the engine and inspect it.'],
+    engineReducedTorque: ['Engine output reduced', 'The vehicle controller reported reduced engine torque.', 'Available engine performance was limited.', 'Review other findings and inspect the engine if the restriction returns.'],
+    engineDisabled: ['Engine disabled', 'The vehicle reported that the engine could not operate.', 'Propulsion from the engine was unavailable.', 'Inspect active damage and engine systems before restarting.'],
+    engineLockedUp: ['Engine lock-up', 'BeamNG reported that the engine could not rotate.', 'The engine cannot operate normally.', 'Stop attempting to run the engine and inspect internal damage.'],
+    impactDamage: ['Engine impact damage', 'An impact damaged the engine assembly.', 'Engine operation or durability may be compromised.', 'Inspect the engine and its mounts before continued operation.'],
+    radiatorLeak: ['Radiator leak', 'BeamNG reported cooling-system leakage from the radiator.', 'Coolant loss may lead to overheating.', 'Inspect the radiator and coolant level before continued operation.'],
+    oilRadiatorLeak: ['Engine oil cooler leak', 'BeamNG reported oil leakage from the oil cooler.', 'Oil loss may reduce lubrication.', 'Inspect the oil cooler and oil level before continued operation.'],
+    oilpanLeak: ['Engine oil pan leak', 'BeamNG reported oil leakage from the oil pan.', 'Oil loss may reduce lubrication.', 'Inspect the oil pan and oil level before continued operation.'],
+    exhaustBroken: ['Exhaust system damage', 'BeamNG reported a broken exhaust connection.', 'Exhaust flow, sound, or emissions behavior may be affected.', 'Inspect and repair the exhaust system.'],
+    blockMelted: ['Engine block thermal failure', 'Extreme temperature damaged the engine block.', 'The engine cannot operate safely.', 'Stop the engine and replace or rebuild the damaged assembly.'],
+    cylinderWallsMelted: ['Cylinder wall thermal failure', 'Extreme temperature damaged the cylinder walls.', 'The engine cannot operate safely.', 'Stop the engine and replace or rebuild the damaged assembly.'],
+    synchroWear: ['Gear synchronizer wear observed', 'BeamNG reported synchronizer stress during a gear change.', 'Gear engagement may become difficult or noisy.', 'Use the clutch fully and avoid forcing gear engagement.'],
+  }
+  const definition = definitions[event?.name]
+  if (!definition) return null
+  const active = event.active === true
+  return {
+    key: `native-${event.group}-${event.name}`,
+    severity: ['catastrophicOverrevDamage', 'catastrophicOverTorqueDamage', 'engineLockedUp', 'blockMelted', 'cylinderWallsMelted', 'oilLevelCritical'].includes(event.name) ? 'high' : 'medium',
+    attention: active,
+    recent: !active,
+    title: `${active ? 'Active — ' : 'Recently observed — '}${definition[0]}`,
+    cause: definition[1], effect: definition[2], action: definition[3],
+  }
 }
 function friendlyFindingCause(reason) {
   const labels = {
@@ -621,8 +679,9 @@ function dueText(item) {
 </script>
 
 <style scoped>
-.scanner{--bg:#0b1118;--card:#131d27;--line:#263541;--text:#eef5f3;--muted:#91a3aa;--green:#50e3a4;--amber:#ffbe55;--red:#ff6673;height:100%;overflow-y:auto;overscroll-behavior:contain;padding:3.2rem 14px 28px;background:var(--bg);color:var(--text);font-family:Inter,Arial,sans-serif;box-sizing:border-box}.hero{display:flex;align-items:center;justify-content:space-between;padding:6px 2px 14px}.eyebrow{font-size:9px;letter-spacing:.16em;color:var(--green);font-weight:800}.hero h1{font-size:20px;line-height:1.15;margin:4px 0 0;max-width:210px}.status{font-size:8px;font-weight:900;letter-spacing:.08em;color:var(--muted);border:1px solid var(--line);border-radius:99px;padding:6px 7px}.status.online{color:var(--green);border-color:#287a5a;background:#10271f}.tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:4px;background:#111a23;border-radius:11px;margin-bottom:10px}.tabs button{border:0;background:transparent;color:var(--muted);font-size:9px;font-weight:700;padding:8px 2px;border-radius:8px}.tabs button.active{background:#263541;color:white}.gauges{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}.gauge,.card,.notice{background:var(--card);border:1px solid var(--line);border-radius:13px}.gauge{padding:12px}.gauge span,:deep(.metric span){display:block;color:var(--muted);font-size:10px}.gauge strong{display:inline-block;font-size:25px;margin-top:5px}.gauge small,:deep(.metric small){color:var(--muted);font-size:9px;margin-left:5px}.bar,.service-bar{height:5px;border-radius:5px;background:#263541;overflow:hidden;margin-top:8px}.bar i,.service-bar i{display:block;height:100%;background:var(--green);border-radius:inherit}.bar i.hot{background:var(--red)}.card{padding:12px;margin-bottom:8px}.grid{display:grid;grid-template-columns:1fr 1fr;padding:0}.metric{min-height:64px;padding:11px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);box-sizing:border-box}.metric:nth-child(even){border-right:0}.metric:nth-last-child(-n+2){border-bottom:0}:deep(.metric strong){font-size:15px;display:inline-block;margin-top:7px}.metric.caution :deep(strong){color:var(--amber)}.metric.warn :deep(strong){color:var(--red)}.card h2,.card-title{font-size:12px;margin:0 0 10px;font-weight:800}.card-title{display:flex;justify-content:space-between;align-items:center}.limits-card h2{margin-bottom:3px}.limit-list>div{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);font-size:10px}.limit-list>div:last-child{border-bottom:0}.limit-list span{color:var(--muted)}.limit-list strong{text-align:right}.limits-card p,:deep(.notice p){font-size:9px;line-height:1.45;color:var(--muted);margin:8px 0 0}.status-row{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--line);font-size:10px}:deep(.status-row b){text-align:right;color:var(--green)}.status-row.warn :deep(b){color:var(--amber)}.status-row.bad :deep(b){color:var(--red)}.notice{padding:13px;margin-bottom:8px;border-color:#5d4b2c;background:#211c14}:deep(.notice b){font-size:11px;color:var(--amber)}.mileage-wear{padding:2px 0 12px;border-bottom:1px solid var(--line)}.mileage-wear>div:first-child{display:flex;justify-content:space-between;font-size:10px}.mileage-wear small{display:block;color:var(--muted);font-size:8px;margin-top:6px}.service-heading{color:var(--muted);font-size:8px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin:12px 0 3px}.service-item{margin:11px 0}.service-item>div:first-child{display:flex;justify-content:space-between;font-size:10px}.service-item small{display:block;color:var(--muted);font-size:8px;margin-top:4px}.service-bar i.warn-text{background:var(--amber)}.service-bar i.bad-text{background:var(--red)}.service-bar i.neutral-text{background:var(--muted)}.good-text{color:var(--green)}.warn-text{color:var(--amber)}.bad-text{color:var(--red)}.neutral-text{color:var(--muted)}.risk{display:flex;flex-direction:column;gap:2px;padding:8px;margin-top:6px;border-left:3px solid var(--amber);background:#211c14;font-size:9px}.risk.high{border-color:var(--red);background:#251418}.risk span{color:var(--muted)}footer{text-align:center;color:#60737b;font-size:8px;padding:10px}
+.scanner{--bg:#0b1118;--card:#131d27;--line:#263541;--text:#eef5f3;--muted:#91a3aa;--green:#50e3a4;--amber:#ffbe55;--red:#ff6673;height:100%;overflow-y:auto;overscroll-behavior:contain;padding:3.2rem 14px 28px;background:var(--bg);color:var(--text);font-family:Inter,Arial,sans-serif;box-sizing:border-box}.hero{display:flex;align-items:center;justify-content:space-between;padding:6px 2px 14px}.eyebrow{font-size:9px;letter-spacing:.16em;color:var(--muted);font-weight:800}.eyebrow.caution{color:var(--amber)}.hero h1{font-size:20px;line-height:1.15;margin:4px 0 0;max-width:210px}.status{font-size:8px;font-weight:900;letter-spacing:.08em;color:var(--muted);border:1px solid var(--line);border-radius:99px;padding:6px 7px}.status.online,.eyebrow:not(.caution){color:var(--green)}.status.online{border-color:#287a5a;background:#10271f}.status.caution{color:var(--amber);border-color:#7c5d28;background:#271f10}.tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:4px;background:#111a23;border-radius:11px;margin-bottom:10px}.tabs button{border:0;background:transparent;color:var(--muted);font-size:9px;font-weight:700;padding:8px 2px;border-radius:8px}.tabs button.active{background:#263541;color:white}.gauges{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}.gauge,.card,.notice{background:var(--card);border:1px solid var(--line);border-radius:13px}.gauge{padding:12px}.gauge span,:deep(.metric span){display:block;color:var(--muted);font-size:10px}.gauge strong{display:inline-block;font-size:25px;margin-top:5px}.gauge small,:deep(.metric small){color:var(--muted);font-size:9px;margin-left:5px}.bar,.service-bar{height:5px;border-radius:5px;background:#263541;overflow:hidden;margin-top:8px}.bar i,.service-bar i{display:block;height:100%;background:var(--green);border-radius:inherit}.bar i.hot{background:var(--red)}.card{padding:12px;margin-bottom:8px}.grid{display:grid;grid-template-columns:1fr 1fr;padding:0}.metric{min-height:64px;padding:11px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);box-sizing:border-box}.metric:nth-child(even){border-right:0}.metric:nth-last-child(-n+2){border-bottom:0}:deep(.metric strong){font-size:15px;display:inline-block;margin-top:7px}.metric.caution :deep(strong){color:var(--amber)}.metric.warn :deep(strong){color:var(--red)}.card h2,.card-title{font-size:12px;margin:0 0 10px;font-weight:800}.card-title{display:flex;justify-content:space-between;align-items:center}.limits-card h2{margin-bottom:3px}.limit-list>div{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);font-size:10px}.limit-list>div:last-child{border-bottom:0}.limit-list span{color:var(--muted)}.limit-list strong{text-align:right}.limits-card p,:deep(.notice p){font-size:9px;line-height:1.45;color:var(--muted);margin:8px 0 0}.status-row{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--line);font-size:10px}:deep(.status-row b){text-align:right;color:var(--green)}.status-row.warn :deep(b){color:var(--amber)}.status-row.bad :deep(b){color:var(--red)}.notice{padding:13px;margin-bottom:8px;border-color:#5d4b2c;background:#211c14}:deep(.notice b){font-size:11px;color:var(--amber)}.mileage-wear{padding:2px 0 12px;border-bottom:1px solid var(--line)}.mileage-wear>div:first-child{display:flex;justify-content:space-between;font-size:10px}.mileage-wear small{display:block;color:var(--muted);font-size:8px;margin-top:6px}.service-heading{color:var(--muted);font-size:8px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin:12px 0 3px}.service-item{margin:11px 0}.service-item>div:first-child{display:flex;justify-content:space-between;font-size:10px}.service-item small{display:block;color:var(--muted);font-size:8px;margin-top:4px}.service-bar i.warn-text{background:var(--amber)}.service-bar i.bad-text{background:var(--red)}.service-bar i.neutral-text{background:var(--muted)}.good-text{color:var(--green)}.warn-text{color:var(--amber)}.bad-text{color:var(--red)}.neutral-text{color:var(--muted)}.risk{display:flex;flex-direction:column;gap:2px;padding:8px;margin-top:6px;border-left:3px solid var(--amber);background:#211c14;font-size:9px}.risk.high{border-color:var(--red);background:#251418}.risk span{color:var(--muted)}footer{text-align:center;color:#60737b;font-size:8px;padding:10px}
 .scanner::-webkit-scrollbar{width:4px}
+.eyebrow:not(.online):not(.caution){color:var(--muted)}
 .scanner::-webkit-scrollbar-track{background:transparent}
 .scanner::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:999px}
 .scanner::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.3)}

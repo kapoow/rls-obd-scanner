@@ -2,9 +2,43 @@
 local M = {}
 
 local UPDATE_INTERVAL = 0.20
+local RECENT_EVENT_SECONDS = 300
 local timer = 0
 local recentClutchHeatSeconds = 0
 local recentClutchHeatPeakC = nil
+local recentDamageEvents = {}
+
+-- Native BeamNG damage states that are meaningful to a scan-tool user. Device-
+-- named powertrain entries are deliberately excluded because their meaning is
+-- vehicle-specific and cannot be described reliably without more context.
+local trackedDamage = {
+  engine = {
+    overRevDanger = true,
+    mildOverrevDamage = true,
+    catastrophicOverrevDamage = true,
+    overTorqueDanger = true,
+    catastrophicOverTorqueDamage = true,
+    coolantOverheating = true,
+    oilOverheating = true,
+    starvedOfOil = true,
+    oilLevelCritical = true,
+    oilLevelTooHigh = true,
+    engineIsHydrolocking = true,
+    engineReducedTorque = true,
+    engineDisabled = true,
+    engineLockedUp = true,
+    impactDamage = true,
+    radiatorLeak = true,
+    oilRadiatorLeak = true,
+    oilpanLeak = true,
+    exhaustBroken = true,
+    blockMelted = true,
+    cylinderWallsMelted = true,
+  },
+  gearbox = {
+    synchroWear = true,
+  },
+}
 
 local function number(value)
   value = tonumber(value)
@@ -57,6 +91,105 @@ local function reportedBoolean(container, key)
   if container[key] == true then return true end
   local numeric = number(container[key])
   return numeric ~= nil and numeric ~= 0
+end
+
+local function firstReportedBoolean(container, ...)
+  for i = 1, select("#", ...) do
+    local value = reportedBoolean(container, select(i, ...))
+    if value ~= nil then return value end
+  end
+  return nil
+end
+
+local function damageIsActive(value)
+  if value == true then return true end
+  local numeric = number(value)
+  return numeric ~= nil and numeric ~= 0
+end
+
+local function damageEventKey(group, name)
+  return tostring(group) .. ":" .. tostring(name)
+end
+
+local function observeDamageChange(group, name, value)
+  if not (trackedDamage[group] and trackedDamage[group][name]) then return end
+  local key = damageEventKey(group, name)
+  local active = damageIsActive(value)
+  local event = recentDamageEvents[key]
+  if active then
+    recentDamageEvents[key] = {
+      group = group,
+      name = name,
+      active = true,
+      secondsRemaining = RECENT_EVENT_SECONDS,
+    }
+  elseif event and event.active then
+    event.active = false
+    event.secondsRemaining = RECENT_EVENT_SECONDS
+  end
+end
+
+local function onDamageDataChanged(_, damageDelta)
+  if type(damageDelta) ~= "table" then return end
+  for group, values in pairs(damageDelta) do
+    if type(values) == "table" and trackedDamage[group] then
+      for name, value in pairs(values) do
+        observeDamageChange(group, name, value)
+      end
+    end
+  end
+end
+
+local function registerDamageListener()
+  if not damageTracker or type(damageTracker.registerDamageUpdateCallback) ~= "function" then return end
+  if not damageTracker._rlsObdScannerCallbackInstalled then
+    damageTracker._rlsObdScannerCallbackInstalled = true
+    damageTracker.registerDamageUpdateCallback(function(data, delta)
+      local scanner = rawget(_G, "rlsObdScanner")
+      if type(scanner) == "table" and type(scanner.onDamageDataChanged) == "function" then
+        scanner.onDamageDataChanged(data, delta)
+      end
+    end)
+  end
+
+  if type(damageTracker.getDamage) == "function" then
+    for group, names in pairs(trackedDamage) do
+      for name in pairs(names) do
+        if damageIsActive(damageTracker.getDamage(group, name)) then
+          observeDamageChange(group, name, true)
+        end
+      end
+    end
+  end
+end
+
+local function updateRecentDamageEvents(elapsed)
+  for key, event in pairs(recentDamageEvents) do
+    if event.active then
+      event.secondsRemaining = RECENT_EVENT_SECONDS
+    else
+      event.secondsRemaining = math.max(0, (number(event.secondsRemaining) or 0) - elapsed)
+      if event.secondsRemaining <= 0 then recentDamageEvents[key] = nil end
+    end
+  end
+end
+
+local function recentDamageEventData()
+  local result = {}
+  for _, event in pairs(recentDamageEvents) do
+    result[#result + 1] = {
+      group = event.group,
+      name = event.name,
+      active = event.active == true,
+      secondsRemaining = math.ceil(number(event.secondsRemaining) or 0),
+    }
+  end
+  table.sort(result, function(a, b)
+    if a.active ~= b.active then return a.active end
+    if a.secondsRemaining ~= b.secondsRemaining then return a.secondsRemaining > b.secondsRemaining end
+    return damageEventKey(a.group, a.name) < damageEventKey(b.group, b.name)
+  end)
+  return result
 end
 
 local function findActivePart(slotNeedle, nameNeedle, excludedName)
@@ -252,6 +385,7 @@ local function buildState()
     forcedInductionType = turbocharger and "Turbocharger" or (supercharger and "Supercharger" or nil),
     forcedInductionName = turbochargerName or superchargerName,
     ignition = firstNumber(ev.ignitionLevel, ev.ignition),
+    engineRunning = firstReportedBoolean(ev, "engineRunning", "running"),
     fuel = normalized(ev.fuel),
     checkEngine = reportedBoolean(ev, "checkengine"),
     coolantTemp = firstNumber(ev.watertemp, ev.coolantTemperature, thermals and thermals.coolantTemperature),
@@ -275,6 +409,7 @@ local function buildState()
     clutchWarningTempC = clutch and number(clutch.clutchWarningTemp) or nil,
     clutchMaxSafeTempC = clutch and number(clutch.clutchMaxSafeTemp) or nil,
     recentClutchHeatPeakC = recentClutchHeatSeconds > 0 and recentClutchHeatPeakC or nil,
+    recentDamageEvents = recentDamageEventData(),
     clutchDamaged = reportedBoolean(clutch, "clutchPermanentlyDamaged"),
     frontDifferential = differentialData("F"),
     centerCoupling = centerCouplingName and {name = centerCouplingName} or nil,
@@ -286,6 +421,7 @@ local function updateGFX(dt)
   local elapsed = number(dt) or 0
   timer = timer + elapsed
   recentClutchHeatSeconds = math.max(0, recentClutchHeatSeconds - elapsed)
+  updateRecentDamageEvents(elapsed)
   if timer < UPDATE_INTERVAL then return end
   timer = 0
   local ev = electrics and electrics.values or {}
@@ -312,6 +448,12 @@ local function requestState()
   if gui then gui.send("rlsObdScannerData", buildState()) end
 end
 
+local function onExtensionLoaded()
+  registerDamageListener()
+end
+
+M.onExtensionLoaded = onExtensionLoaded
 M.updateGFX = updateGFX
 M.requestState = requestState
+M.onDamageDataChanged = onDamageDataChanged
 return M
