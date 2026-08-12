@@ -65,6 +65,18 @@ local function getEngine()
   return devices and devices[1] or nil
 end
 
+local function getElectricMotors()
+  local result = {}
+  local devices = powertrain and powertrain.getDevicesByCategory and powertrain.getDevicesByCategory("engine") or nil
+  for _, device in pairs(devices or {}) do
+    if device.type == "electricMotor" then result[#result + 1] = device end
+  end
+  table.sort(result, function(a, b)
+    return tostring(a.name or "") < tostring(b.name or "")
+  end)
+  return result
+end
+
 local function getGearbox()
   local devices = powertrain and powertrain.getDevicesByCategory and powertrain.getDevicesByCategory("gearbox") or nil
   return devices and devices[1] or nil
@@ -252,6 +264,44 @@ local function findEngineName()
   return nil
 end
 
+local function electricMotorPosition(device)
+  local name = tostring(device and device.name or ""):lower()
+  if name:find("front", 1, true) then return "Front" end
+  if name:find("rear", 1, true) then return "Rear" end
+  return nil
+end
+
+local function findElectricMotorName(device)
+  local position = electricMotorPosition(device)
+  if position == "Rear" then
+    local _, name = findActivePart("differential_r", "motor")
+    if name then return name end
+  elseif position == "Front" then
+    local name = findEngineName()
+    if name then return name end
+  end
+  return position and (position .. " electric motor") or "Electric motor"
+end
+
+local function electricMotorData(device)
+  local ratedPowerHp = powerHp(firstNumber(device.maxPower, device.torqueData and device.torqueData.maxPower))
+  return {
+    id = tostring(device.name or "electricMotor"),
+    position = electricMotorPosition(device),
+    name = findElectricMotorName(device),
+    rpm = math.abs(firstNumber(device.outputRPM, device.outputAV1 and device.outputAV1 * 9.549296596) or 0),
+    load = normalizedEngineLoad(device.engineLoad),
+    ratedTorqueNm = firstNumber(device.maxTorque, device.torqueData and device.torqueData.maxTorque),
+    torqueLimitNm = number(device.maxTorqueLimit),
+    ratedPowerHp = ratedPowerHp,
+    ratedPowerKw = ratedPowerHp and ratedPowerHp * 0.735499 or nil,
+    maxRpm = firstNumber(device.maxRPM, device.maxAV and device.maxAV * 9.549296596),
+    broken = reportedBoolean(device, "isBroken"),
+    disabled = reportedBoolean(device, "isDisabled"),
+    hasEnergy = reportedBoolean(device, "hasEnergy"),
+  }
+end
+
 local function findClutchAndFlywheelNames()
   local activeParts = v and v.data and v.data.activePartsData or nil
   if type(activeParts) ~= "table" then return nil, nil end
@@ -391,7 +441,22 @@ end
 local function buildState()
   local ev = electrics and electrics.values or {}
   local engine = getEngine()
+  local electricMotorDevices = getElectricMotors()
   local isElectric = engine and engine.type == "electricMotor" or false
+  local motors = {}
+  local worstMotorAvailability = nil
+  local worstMotor = nil
+  for _, device in ipairs(electricMotorDevices) do
+    local motor = electricMotorData(device)
+    motors[#motors + 1] = motor
+    if motor.ratedTorqueNm and motor.ratedTorqueNm > 0 and motor.torqueLimitNm then
+      local availability = math.max(0, math.min(1, motor.torqueLimitNm / motor.ratedTorqueNm))
+      if not worstMotorAvailability or availability < worstMotorAvailability then
+        worstMotorAvailability = availability
+        worstMotor = motor
+      end
+    end
+  end
   local gearbox = getGearbox()
   local clutch = getClutch()
   local clutchConfig = v and v.data and v.data.clutch or nil
@@ -433,15 +498,16 @@ local function buildState()
     or firstNumber(ev.rpm, engine and engine.outputAV1 and engine.outputAV1 * 9.549296596)
   if isElectric and propulsionRpm then propulsionRpm = math.abs(propulsionRpm) end
   local motorBroken, motorDisabled, motorHasEnergy = nil, nil, nil
-  if isElectric then
-    motorBroken = reportedBoolean(engine, "isBroken")
-    motorDisabled = reportedBoolean(engine, "isDisabled")
-    motorHasEnergy = reportedBoolean(engine, "hasEnergy")
+  for _, motor in ipairs(motors) do
+    if motor.broken ~= nil then motorBroken = motorBroken == true or motor.broken end
+    if motor.disabled ~= nil then motorDisabled = motorDisabled == true or motor.disabled end
+    if motor.hasEnergy ~= nil then motorHasEnergy = motorHasEnergy == true or motor.hasEnergy end
   end
   return {
     vehicleId = obj:getId(),
     vehicleName = v and v.config and (v.config.name or v.config.model) or nil,
     isElectric = isElectric,
+    motors = motors,
     rpm = propulsionRpm,
     engineLoad = engine and (isElectric and normalizedEngineLoad(engine.engineLoad) or normalized(engine.engineLoad)) or nil,
     idleRpm = engine and engine.idleAV and engine.idleAV * 9.549296596 or nil,
@@ -458,8 +524,8 @@ local function buildState()
     checkEngine = reportedBoolean(ev, "checkengine"),
     coolantTemp = firstNumber(ev.watertemp, ev.coolantTemperature, thermals and thermals.coolantTemperature),
     oilTemp = firstNumber(ev.oiltemp, ev.oilTemperature, thermals and thermals.oilTemperature),
-    ratedTorqueNm = ratedTorque,
-    motorTorqueLimitNm = isElectric and engine and number(engine.maxTorqueLimit) or nil,
+    ratedTorqueNm = worstMotor and worstMotor.ratedTorqueNm or ratedTorque,
+    motorTorqueLimitNm = worstMotor and worstMotor.torqueLimitNm or (isElectric and engine and number(engine.maxTorqueLimit) or nil),
     motorBroken = motorBroken,
     motorDisabled = motorDisabled,
     motorHasEnergy = motorHasEnergy,
@@ -504,10 +570,10 @@ local function updateGFX(dt)
   local ev = electrics and electrics.values or {}
   local engine = getEngine()
   local clutch = getClutch()
-  if engine and engine.type == "electricMotor" then
-    local ratedTorque = number(engine.maxTorque)
-    local torqueLimit = number(engine.maxTorqueLimit)
-    local motorLoad = number(engine.engineLoad)
+  for _, motor in ipairs(getElectricMotors()) do
+    local ratedTorque = number(motor.maxTorque)
+    local torqueLimit = number(motor.maxTorqueLimit)
+    local motorLoad = number(motor.engineLoad)
     if ratedTorque and ratedTorque > 0 and torqueLimit and motorLoad and motorLoad >= 0.35 then
       local availability = math.max(0, math.min(1, torqueLimit / ratedTorque))
       if availability < 0.995 then

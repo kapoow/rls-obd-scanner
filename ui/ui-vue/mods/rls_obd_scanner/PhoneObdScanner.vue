@@ -37,7 +37,7 @@
           <Metric :label="live.isElectric ? 'Vehicle state' : 'Ignition'" :value="ignitionText" />
           <Metric :label="live.isElectric ? 'Propulsion load' : 'Engine load'" :value="percent(live.engineLoad)" />
           <Metric label="Diagnostic status" :value="diagnosticStatusText" :warn="hasActiveFault" />
-          <Metric v-if="!live.isElectric" label="Next service (est.)" :value="nextServiceText" />
+          <Metric label="Next service (est.)" :value="nextServiceText" />
         </section>
 
         <section v-if="diagnosticFindings.length" class="card findings-card">
@@ -56,11 +56,17 @@
         <section class="card specs-card">
           <h2>{{ live.isElectric ? 'Motor specifications' : 'Engine specifications' }}</h2>
           <div class="spec-list">
-            <div v-if="live.engineName"><span>{{ live.isElectric ? 'Motor' : 'Engine' }}</span><strong>{{ live.engineName }}</strong></div>
-            <div v-if="live.isElectric && isNumber(live.ratedPowerKw)"><span>Peak power</span><strong>{{ whole(live.ratedPowerKw) }} kW</strong></div>
-            <div v-else-if="isNumber(ratedPowerHp)"><span>Peak power</span><strong>{{ whole(ratedPowerHp) }} hk</strong></div>
-            <div v-if="isNumber(ratedTorque)"><span>Peak torque</span><strong>{{ torque(ratedTorque) }}</strong></div>
-            <div v-if="live.isElectric && isNumber(live.motorMaxRpm)"><span>Maximum motor speed</span><strong>{{ whole(live.motorMaxRpm) }} rpm</strong></div>
+            <template v-if="live.isElectric && live.motors?.length">
+              <template v-for="motor in live.motors" :key="motor.id">
+                <div><span>{{ motor.position ? `${motor.position} motor` : 'Motor' }}</span><strong>{{ motor.name }}</strong></div>
+                <div v-if="isNumber(motor.ratedPowerKw)"><span>Peak power</span><strong>{{ whole(motor.ratedPowerKw) }} kW</strong></div>
+                <div v-if="isNumber(motor.ratedTorqueNm)"><span>Peak torque</span><strong>{{ torque(motor.ratedTorqueNm) }}</strong></div>
+                <div v-if="isNumber(motor.maxRpm)"><span>Maximum motor speed</span><strong>{{ whole(motor.maxRpm) }} rpm</strong></div>
+              </template>
+            </template>
+            <div v-else-if="live.engineName"><span>Engine</span><strong>{{ live.engineName }}</strong></div>
+            <div v-if="!live.isElectric && isNumber(ratedPowerHp)"><span>Peak power</span><strong>{{ whole(ratedPowerHp) }} hk</strong></div>
+            <div v-if="!live.isElectric && isNumber(ratedTorque)"><span>Peak torque</span><strong>{{ torque(ratedTorque) }}</strong></div>
             <div v-if="live.forcedInductionName || live.forcedInductionType"><span>Forced induction</span><strong>{{ live.forcedInductionName || live.forcedInductionType }}</strong></div>
           </div>
         </section>
@@ -102,8 +108,7 @@
           <h2>Diagnostics</h2>
           <StatusRow label="Current propulsion output" :bad="motorRestrictionNeedsAttention" :warn="motorOutputRestricted && !motorRestrictionNeedsAttention" :text="motorOutputText" />
           <StatusRow v-if="!motorOutputRestricted && isNumber(recentMotorTorqueAvailability)" label="Observed under-load output" warn :text="`${percent(recentMotorTorqueAvailability)} available`" />
-          <StatusRow v-if="isBoolean(live.motorBroken)" label="Drive motor" :bad="live.motorBroken" :text="live.motorBroken ? 'Fault detected' : 'Normal'" />
-          <StatusRow v-if="motorUnavailable" label="Motor availability" bad text="Unavailable" />
+          <StatusRow v-for="motor in live.motors || []" :key="motor.id" :label="motor.position ? `${motor.position} motor` : motor.name" :bad="motor.broken === true || (motor.disabled === true && motor.hasEnergy === true)" :text="motor.broken === true ? 'Fault detected' : motor.disabled === true && motor.hasEnergy === true ? 'Unavailable' : 'Normal'" />
         </section>
 
         <section v-else class="card">
@@ -116,13 +121,13 @@
       </main>
 
       <main v-else-if="tab === 'service'">
-        <Notice v-if="live.isElectric" title="EV service information unavailable">
-          RLS does not currently report verified electric-motor or battery maintenance data for this vehicle.
+        <Notice v-if="live.isElectric && maintenanceOnline" title="RLS maintenance model">
+          These service values are applied to this vehicle by RLS and can affect propulsion output, but they are not native EV component readings.
         </Notice>
-        <Notice v-else-if="!maintenanceOnline" title="Service information unavailable">
+        <Notice v-if="!maintenanceOnline" title="Service information unavailable">
           Service information is still initializing or is not available for this vehicle.
         </Notice>
-        <template v-else>
+        <template v-if="maintenanceOnline">
           <section v-for="category in maintenanceCategories" :key="category.key" class="card service-card">
             <div class="card-title">
               <span>{{ category.label }}</span>
