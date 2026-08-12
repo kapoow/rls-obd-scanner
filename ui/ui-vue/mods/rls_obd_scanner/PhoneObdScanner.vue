@@ -1,5 +1,5 @@
 <template>
-  <PhoneWrapper app-name="Vehicle Scanner">
+  <PhoneWrapper app-name="OBD Scanner">
     <div class="scanner">
       <header class="hero">
         <div>

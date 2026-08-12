@@ -20,7 +20,7 @@ async function waitForUi(timeoutMs = 60000) {
 function definition() {
   return {
     id: APP_ID,
-    name: "Vehicle Scanner",
+    name: "OBD Scanner",
     iconImage: "/ui/entrypoints/main/tiles/rls-obd-scanner.svg",
     iconImageFit: "contain",
     route: "/career/" + ROUTE,
