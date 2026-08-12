@@ -56,9 +56,9 @@
         <section class="card specs-card">
           <h2>Engine specifications</h2>
           <div class="spec-list">
+            <div v-if="live.engineName"><span>Engine</span><strong>{{ live.engineName }}</strong></div>
             <div v-if="isNumber(ratedPowerHp)"><span>Peak power</span><strong>{{ whole(ratedPowerHp) }} hk</strong></div>
             <div v-if="isNumber(ratedTorque)"><span>Peak torque</span><strong>{{ torque(ratedTorque) }}</strong></div>
-            <div v-if="isNumber(live.idleRpm)"><span>Target idle speed</span><strong>{{ whole(live.idleRpm) }} rpm</strong></div>
             <div v-if="live.forcedInductionName || live.forcedInductionType"><span>Forced induction</span><strong>{{ live.forcedInductionName || live.forcedInductionType }}</strong></div>
           </div>
         </section>
@@ -66,6 +66,9 @@
         <section v-if="hasEcuCalibration" class="card calibration-card">
           <h2>Engine management</h2>
           <div class="spec-list">
+            <div v-if="isNumber(live.idleRpm)">
+              <span>Target idle speed</span><strong>{{ whole(live.idleRpm) }} rpm</strong>
+            </div>
             <div v-if="isNumber(live.ecuLimiterRpm)">
               <span>Rev limiter</span><strong>{{ whole(live.ecuLimiterRpm) }} rpm</strong>
             </div>
@@ -282,7 +285,7 @@ const ratedTorque = computed(() => live.value.ratedTorqueNm ?? engine.value.torq
 const ratedPowerHp = computed(() => live.value.ratedPowerHp ?? engine.value.powerHp)
 const limiterStrategyText = computed(() => ({ timeBased: 'Timed cut', rpmDrop: 'RPM-drop cut' })[live.value.revLimiterType] || null)
 const limiterCutDurationMs = computed(() => limiterStrategyText.value && isNumber(live.value.revLimiterCutTime) ? live.value.revLimiterCutTime * 1000 : null)
-const hasEcuCalibration = computed(() => isNumber(live.value.ecuLimiterRpm) || Boolean(limiterStrategyText.value) || isNumber(live.value.wastegateStartPsi))
+const hasEcuCalibration = computed(() => isNumber(live.value.idleRpm) || isNumber(live.value.ecuLimiterRpm) || Boolean(limiterStrategyText.value) || isNumber(live.value.wastegateStartPsi))
 const hasEngineLimits = computed(() => isNumber(live.value.overrevThresholdRpm) || isNumber(live.value.overtorqueThresholdNm))
 const pistonRingsDamaged = computed(() => live.value.pistonRingsDamaged || engine.value.pistonRingsDamaged)
 const nextServiceMiles = computed(() => {

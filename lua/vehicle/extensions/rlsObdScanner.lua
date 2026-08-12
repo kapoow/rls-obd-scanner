@@ -208,6 +208,22 @@ local function findActivePart(slotNeedle, nameNeedle, excludedName)
   return nil
 end
 
+local function findEngineName()
+  local activeParts = v and v.data and v.data.activePartsData or nil
+  if type(activeParts) ~= "table" then return nil end
+  for _, part in pairs(activeParts) do
+    local slotType = tostring(type(part) == "table" and part.slotType or ""):lower()
+    local partName = tostring(type(part) == "table" and part.information and part.information.name or "")
+    local lowerName = partName:lower()
+    local isEngineSlot = slotType == "engine" or slotType:sub(-7) == "_engine"
+    local isGenericName = lowerName == "engine" or lowerName:find("engine options", 1, true) ~= nil
+    if isEngineSlot and partName ~= "" and not isGenericName then
+      return partName
+    end
+  end
+  return nil
+end
+
 local function findClutchAndFlywheelNames()
   local activeParts = v and v.data and v.data.activePartsData or nil
   if type(activeParts) ~= "table" then return nil, nil end
@@ -355,6 +371,7 @@ local function buildState()
   local thermals = engine and engine.thermals or nil
   local turbocharger = v and v.data and v.data.turbocharger or nil
   local supercharger = v and v.data and v.data.supercharger or nil
+  local engineName = findEngineName()
   local _, gearboxName = findActivePart("transmission", "transmission")
   local clutchName, flywheelName = findClutchAndFlywheelNames()
   local _, centerCouplingName = findActivePart("transfer_case", nil)
@@ -394,6 +411,7 @@ local function buildState()
     overtorqueThresholdNm = overtorqueThreshold,
     overrevThresholdRpm = overrevThresholdRpm,
     ratedPowerHp = engine and powerHp(firstNumber(engine.maxPower, engine.torqueData and engine.torqueData.maxPower)) or nil,
+    engineName = engineName,
     pistonRingsDamaged = reportedBoolean(thermals, "pistonRingsDamaged"),
     headGasketDamaged = reportedBoolean(thermals, "headGasketDamaged"),
     rodBearingsDamaged = reportedBoolean(thermals, "connectingRodBearingsDamaged"),
