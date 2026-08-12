@@ -4,6 +4,13 @@ RLS OBD Scanner is a standalone phone app for the BeamNG.drive RLS Career
 Overhaul. It presents live vehicle diagnostics and maintenance information in a
 compact scan-tool interface.
 
+<table>
+  <tr>
+    <td><img src="assets/screenshots/Overview.PNG" alt="OBD Scanner overview for a Hirochi Sunburst"></td>
+    <td><img src="assets/screenshots/Engine_tseries-hybrid.PNG" alt="Series-hybrid engine and drive-motor specifications"></td>
+  </tr>
+</table>
+
 The app can display available information for:
 
 - Combustion engines, electric vehicles, and series hybrids
@@ -26,10 +33,15 @@ or maintenance data.
 The scanner is designed for the RLS career phone and is not intended to replace
 BeamNG's standard vehicle apps outside career mode.
 
-Support for using the scanner without RLS Maintenance Mode is planned for a
-future update. Native vehicle readings may still be available, but service
-condition information is not currently reliable while maintenance mode is
-disabled.
+## Current limitations
+
+- Support for using the scanner without RLS Maintenance Mode is planned for the
+  next update. Native vehicle readings may still be available, but service
+  condition information is not currently reliable while maintenance mode is
+  disabled.
+- Display units are currently hard-coded and do not yet follow the player's
+  BeamNG unit settings. Dynamic distance, temperature, pressure, power, and
+  torque formatting is also planned for the next update.
 
 ## Installation
 

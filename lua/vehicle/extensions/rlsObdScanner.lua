@@ -285,24 +285,25 @@ end
 local function findEngineName()
   local activeParts = v and v.data and v.data.activePartsData or nil
   if type(activeParts) ~= "table" then return nil end
-  for _, part in pairs(activeParts) do
-    local partName = tostring(type(part) == "table" and part.information and part.information.name or "")
-    local lowerName = partName:lower()
-    if lowerName:find("generator", 1, true) and lowerName:find("engine", 1, true) then
-      return partName
-    end
-  end
-  for _, part in pairs(activeParts) do
+  local bestName, bestScore = nil, 0
+  for partKey, part in pairs(activeParts) do
     local slotType = tostring(type(part) == "table" and part.slotType or ""):lower()
     local partName = tostring(type(part) == "table" and part.information and part.information.name or "")
     local lowerName = partName:lower()
-    local isEngineSlot = slotType == "engine" or slotType:sub(-7) == "_engine"
-    local isGenericName = lowerName == "engine" or lowerName:find("engine options", 1, true) ~= nil
-    if isEngineSlot and partName ~= "" and not isGenericName then
-      return partName
+    local lowerKey = tostring(partKey):lower()
+    local isManagement = lowerName:find("management", 1, true)
+      or lowerKey:find("ecu", 1, true)
+    local isGenericName = lowerName == "engine" or lowerName:find("engine options", 1, true)
+    if partName ~= "" and not isManagement and not isGenericName then
+      local score = 0
+      if slotType == "engine" or slotType:sub(-7) == "_engine" then score = score + 4 end
+      if lowerKey:find("engine", 1, true) then score = score + 2 end
+      if lowerName:find("engine", 1, true) then score = score + 2 end
+      if lowerName:find("generator", 1, true) then score = score + 1 end
+      if score > bestScore then bestName, bestScore = partName, score end
     end
   end
-  return nil
+  return bestName
 end
 
 local function electricMotorPosition(device)
@@ -594,6 +595,9 @@ local function buildState()
     generatorRunning = isHybrid and engineRpm and engineRpm >= 100 or nil,
     fuel = normalized(ev.fuel),
     batteryCharge = hasElectricDrive and getElectricBatteryCharge() or nil,
+    airPressurePa = firstNumber(ev.mainAirTank_pressureRelative),
+    lowAirPressure = reportedBoolean(ev, "lowAirPressure"),
+    parkingBrakeApplied = firstReportedBoolean(ev, "parkingbrake", "parkingbrake_input"),
     checkEngine = reportedBoolean(ev, "checkengine"),
     coolantTemp = isCombustionEngine(engine)
       and firstNumber(thermals and thermals.coolantTemperature, ev.coolantTemperature, ev.watertemp)

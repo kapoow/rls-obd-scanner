@@ -200,6 +200,12 @@
           <Metric label="Fluid level" :value="percent(transmission.maintenance?.fluidLevel)" />
         </section>
 
+        <section v-if="isNumber(live.airPressurePa)" class="card grid">
+          <Metric label="Air pressure" :value="airPressure(live.airPressurePa)" :warn="live.lowAirPressure === true" />
+          <Metric v-if="isBoolean(live.lowAirPressure)" label="Air system" :value="live.lowAirPressure ? 'Pressure low' : 'Normal'" :warn="live.lowAirPressure" />
+          <Metric v-if="isBoolean(live.parkingBrakeApplied)" label="Parking brake" :value="live.parkingBrakeApplied ? 'Applied' : 'Released'" :warn="live.lowAirPressure && live.parkingBrakeApplied" />
+        </section>
+
         <section v-if="!live.hasElectricDrive && hasDifferentialData" class="card differentials-card">
           <h2>Differentials</h2>
           <DifferentialBlock label="Front differential" :data="live.frontDifferential" :hide-final-drive="live.isElectric" />
@@ -441,6 +447,7 @@ function percent(value) { return isNumber(value) ? `${Math.round(value * 100)}%`
 function clampPercent(value) { return typeof value === 'number' ? Math.max(0, Math.min(100, value * 100)) : 0 }
 function torque(value) { return isNumber(value) ? `${Math.round(value)} Nm` : null }
 function ratioList(ratios) { return ratios.filter(isNumber).map(ratio => `${decimal(ratio, 2)}:1`).join(' / ') }
+function airPressure(pascals) { return isNumber(pascals) ? `${decimal(pascals / 100000, 1)} bar / ${whole(pascals / 6894.757)} psi` : null }
 function boostPressure(psi) { return isNumber(psi) ? `${decimal(psi * 0.0689476, 2)} bar / ${decimal(psi, 1)} psi` : null }
 function serviceConditionSeverity(item) {
   if (!isNumber(item?.value) || !isNumber(item?.targetValue) || item.targetValue <= 0) return null
@@ -568,6 +575,17 @@ function buildDiagnosticFindings() {
   const add = finding => {
     if (!findings.some(existing => existing.key === finding.key)) findings.push(finding)
   }
+
+  if (live.value.lowAirPressure === true) add({
+    key: 'low-air-pressure', severity: 'high', title: 'Low air pressure',
+    cause: isNumber(live.value.airPressurePa)
+      ? `The pneumatic system currently reports ${airPressure(live.value.airPressurePa)}.`
+      : 'BeamNG reports that pneumatic-system pressure is below its operating threshold.',
+    effect: live.value.parkingBrakeApplied === true
+      ? 'The spring parking brake is applied and may not release until pressure recovers.'
+      : 'Air-brake and pneumatic-system operation may be limited until pressure recovers.',
+    action: 'Allow the air compressor to build pressure. Inspect the compressor, tanks, and pneumatic system if pressure does not recover.',
+  })
 
   if (live.value.isElectric) {
     if (live.value.motorBroken === true) add({
