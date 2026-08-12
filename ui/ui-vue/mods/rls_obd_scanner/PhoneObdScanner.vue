@@ -22,22 +22,22 @@
       <main v-else-if="tab === 'live'">
         <section class="gauges">
           <article v-if="isNumber(live.rpm)" class="gauge">
-            <span>Engine speed</span><strong>{{ whole(live.rpm) }}</strong><small>rpm</small>
+            <span>{{ live.isElectric ? 'Motor speed' : 'Engine speed' }}</span><strong>{{ whole(live.rpm) }}</strong><small>rpm</small>
             <div class="bar"><i :style="{ width: rpmPercent + '%' }"></i></div>
           </article>
-          <article v-if="isNumber(live.coolantTemp)" class="gauge">
+          <article v-if="!live.isElectric && isNumber(live.coolantTemp)" class="gauge">
             <span>Coolant temperature</span><strong>{{ temperature(live.coolantTemp) }}</strong><small>°C</small>
             <div class="bar"><i :class="{ hot: live.coolantTemp >= 115 }" :style="{ width: temperaturePercent + '%' }"></i></div>
           </article>
         </section>
 
         <section class="card grid">
-          <Metric label="Oil" :value="temperature(live.oilTemp)" unit="°C" :warn="live.oilTemp >= 135" />
-          <Metric label="Fuel level" :value="percent(live.fuel)" />
-          <Metric label="Ignition" :value="ignitionText" />
-          <Metric label="Engine load" :value="percent(live.engineLoad)" />
+          <Metric v-if="!live.isElectric" label="Oil" :value="temperature(live.oilTemp)" unit="°C" :warn="live.oilTemp >= 135" />
+          <Metric :label="live.isElectric ? 'Battery charge' : 'Fuel level'" :value="percent(live.isElectric ? live.batteryCharge : live.fuel)" />
+          <Metric :label="live.isElectric ? 'Vehicle state' : 'Ignition'" :value="ignitionText" />
+          <Metric :label="live.isElectric ? 'Propulsion load' : 'Engine load'" :value="percent(live.engineLoad)" />
           <Metric label="Diagnostic status" :value="diagnosticStatusText" :warn="hasActiveFault" />
-          <Metric label="Next service (est.)" :value="nextServiceText" />
+          <Metric v-if="!live.isElectric" label="Next service (est.)" :value="nextServiceText" />
         </section>
 
         <section v-if="diagnosticFindings.length" class="card findings-card">
@@ -54,16 +54,18 @@
 
       <main v-else-if="tab === 'engine'">
         <section class="card specs-card">
-          <h2>Engine specifications</h2>
+          <h2>{{ live.isElectric ? 'Motor specifications' : 'Engine specifications' }}</h2>
           <div class="spec-list">
-            <div v-if="live.engineName"><span>Engine</span><strong>{{ live.engineName }}</strong></div>
-            <div v-if="isNumber(ratedPowerHp)"><span>Peak power</span><strong>{{ whole(ratedPowerHp) }} hk</strong></div>
+            <div v-if="live.engineName"><span>{{ live.isElectric ? 'Motor' : 'Engine' }}</span><strong>{{ live.engineName }}</strong></div>
+            <div v-if="live.isElectric && isNumber(live.ratedPowerKw)"><span>Peak power</span><strong>{{ whole(live.ratedPowerKw) }} kW</strong></div>
+            <div v-else-if="isNumber(ratedPowerHp)"><span>Peak power</span><strong>{{ whole(ratedPowerHp) }} hk</strong></div>
             <div v-if="isNumber(ratedTorque)"><span>Peak torque</span><strong>{{ torque(ratedTorque) }}</strong></div>
+            <div v-if="live.isElectric && isNumber(live.motorMaxRpm)"><span>Maximum motor speed</span><strong>{{ whole(live.motorMaxRpm) }} rpm</strong></div>
             <div v-if="live.forcedInductionName || live.forcedInductionType"><span>Forced induction</span><strong>{{ live.forcedInductionName || live.forcedInductionType }}</strong></div>
           </div>
         </section>
 
-        <section v-if="hasEcuCalibration" class="card calibration-card">
+        <section v-if="!live.isElectric && hasEcuCalibration" class="card calibration-card">
           <h2>Engine management</h2>
           <div class="spec-list">
             <div v-if="isNumber(live.idleRpm)">
@@ -84,7 +86,7 @@
           </div>
         </section>
 
-        <section v-if="hasEngineLimits" class="card limits-card">
+        <section v-if="!live.isElectric && hasEngineLimits" class="card limits-card">
           <h2>Engine limits</h2>
           <div class="limit-list">
             <div v-if="isNumber(live.overrevThresholdRpm)">
@@ -96,7 +98,15 @@
           </div>
         </section>
 
-        <section class="card">
+        <section v-if="live.isElectric" class="card">
+          <h2>Diagnostics</h2>
+          <StatusRow label="Current propulsion output" :bad="motorRestrictionNeedsAttention" :warn="motorOutputRestricted && !motorRestrictionNeedsAttention" :text="motorOutputText" />
+          <StatusRow v-if="!motorOutputRestricted && isNumber(recentMotorTorqueAvailability)" label="Observed under-load output" warn :text="`${percent(recentMotorTorqueAvailability)} available`" />
+          <StatusRow v-if="isBoolean(live.motorBroken)" label="Drive motor" :bad="live.motorBroken" :text="live.motorBroken ? 'Fault detected' : 'Normal'" />
+          <StatusRow v-if="motorUnavailable" label="Motor availability" bad text="Unavailable" />
+        </section>
+
+        <section v-else class="card">
           <h2>Diagnostics</h2>
           <StatusRow v-if="maintenanceOnline" label="Output restriction" :bad="powerLimited && powerLimitReason !== 'Old engine top-end loss'" :warn="powerLimited && powerLimitReason === 'Old engine top-end loss'" :text="powerLimitText" />
           <StatusRow v-if="roughnessState" label="Combustion stability" :bad="roughnessState !== 'Normal'" :text="roughnessState" />
@@ -106,7 +116,10 @@
       </main>
 
       <main v-else-if="tab === 'service'">
-        <Notice v-if="!maintenanceOnline" title="Service information unavailable">
+        <Notice v-if="live.isElectric" title="EV service information unavailable">
+          RLS does not currently report verified electric-motor or battery maintenance data for this vehicle.
+        </Notice>
+        <Notice v-else-if="!maintenanceOnline" title="Service information unavailable">
           Service information is still initializing or is not available for this vehicle.
         </Notice>
         <template v-else>
@@ -138,7 +151,15 @@
       </main>
 
       <main v-else>
-        <section class="card specs-card">
+        <section v-if="live.isElectric" class="card specs-card">
+          <h2>Electric drive</h2>
+          <div class="spec-list">
+            <div v-if="driveLayout"><span>Drive layout</span><strong>{{ driveLayout }}</strong></div>
+            <div v-if="isNumber(electricFinalDriveRatio)"><span>Final drive</span><strong>{{ decimal(electricFinalDriveRatio, 2) }}:1</strong></div>
+          </div>
+        </section>
+
+        <section v-else class="card specs-card">
           <h2>Transmission</h2>
           <div class="spec-list">
             <div v-if="gearboxDisplayName"><span>Gearbox</span><strong>{{ gearboxDisplayName }}</strong></div>
@@ -150,7 +171,7 @@
           </div>
         </section>
 
-        <section class="card grid">
+        <section v-if="!live.isElectric" class="card grid">
           <Metric label="Shift response" :value="shiftQualityState" :warn="shiftQualityState !== 'Normal'" />
           <Metric v-if="hasClutchData" label="Estimated clutch condition" :value="clutchWearState" :warn="clutchWearState !== 'Normal'" />
           <Metric v-if="hasClutchData && isNumber(live.clutchTempC)" label="Clutch temperature" :value="`${whole(live.clutchTempC)} °C`" :warn="clutchTemperatureHigh" :caution="clutchTemperatureElevated" />
@@ -160,12 +181,12 @@
 
         <section v-if="hasDifferentialData" class="card differentials-card">
           <h2>Differentials</h2>
-          <DifferentialBlock label="Front differential" :data="live.frontDifferential" />
-          <DifferentialBlock label="Center coupling" :data="live.centerCoupling" />
-          <DifferentialBlock label="Rear differential" :data="live.rearDifferential" />
+          <DifferentialBlock label="Front differential" :data="live.frontDifferential" :hide-final-drive="live.isElectric" />
+          <DifferentialBlock label="Center coupling" :data="live.centerCoupling" :hide-final-drive="live.isElectric" />
+          <DifferentialBlock label="Rear differential" :data="live.rearDifferential" :hide-final-drive="live.isElectric" />
         </section>
 
-        <section v-if="hasDrivetrainStatus" class="card">
+        <section v-if="!live.isElectric && hasDrivetrainStatus" class="card">
           <h2>Drivetrain status</h2>
           <StatusRow v-if="isBoolean(live.clutchDamaged)" label="Clutch" :bad="live.clutchDamaged" :text="live.clutchDamaged ? 'Fault detected' : 'Normal'" />
           <StatusRow v-if="maintenanceOnline && transmission.activeSymptom" label="Active condition" bad :text="transmission.activeSymptomLabel || 'Fault detected'" />
@@ -195,7 +216,7 @@ const DifferentialBlock = props => {
   const data = props.data
   if (!data?.name) return null
   const settings = [
-    isNumber(data.finalDriveRatio) && ['Final drive', `${decimal(data.finalDriveRatio, 2)}:1`],
+    !props.hideFinalDrive && isNumber(data.finalDriveRatio) && ['Final drive', `${decimal(data.finalDriveRatio, 2)}:1`],
     isNumber(data.powerLockPercent) && ['Power lock', `${Math.round(data.powerLockPercent)}%`],
     isNumber(data.coastLockPercent) && ['Coast lock', `${Math.round(data.coastLockPercent)}%`],
     isNumber(data.preloadNm) && ['Preload', torque(data.preloadNm)],
@@ -205,6 +226,7 @@ const DifferentialBlock = props => {
     settings.length ? h('div', { class: 'differential-settings' }, settings.map(([label, value]) => h('span', [label, h('b', value)]))) : null,
   ])
 }
+DifferentialBlock.props = ['label', 'data', 'hideFinalDrive']
 
 const { api } = useBridge()
 const events = useEvents()
@@ -278,8 +300,13 @@ const connectionNoticeTitle = computed(() => scannerNeedsIgnition.value ? 'Scann
 const connectionNoticeText = computed(() => scannerNeedsIgnition.value ? 'Turn the ignition on to communicate with the vehicle control modules.' : isWalking.value ? 'Enter a vehicle to connect the scanner.' : 'Waiting for vehicle data.')
 const maintenanceOnline = computed(() => Boolean(maintenance.value.categories))
 const vehicleTitle = computed(() => isWalking.value ? 'No vehicle connected' : displayVehicleName.value || live.value.vehicleName || (liveOnline.value ? `Vehicle ${live.value.vehicleId}` : 'No connection'))
-const ignitionText = computed(() => live.value.engineRunning === true ? 'Engine running' : live.value.ignition == null ? null : live.value.ignition >= 2 ? 'Ignition on' : live.value.ignition > 0 ? 'Accessory' : 'Off')
-const rpmPercent = computed(() => live.value.ecuLimiterRpm ? Math.min(100, Math.max(0, live.value.rpm / live.value.ecuLimiterRpm * 100)) : 0)
+const ignitionText = computed(() => live.value.isElectric
+  ? (live.value.ignition == null ? null : live.value.ignition >= 2 ? 'Ready' : live.value.ignition > 0 ? 'Accessory' : 'Off')
+  : (live.value.engineRunning === true ? 'Engine running' : live.value.ignition == null ? null : live.value.ignition >= 2 ? 'Ignition on' : live.value.ignition > 0 ? 'Accessory' : 'Off'))
+const rpmPercent = computed(() => {
+  const maximum = live.value.isElectric ? live.value.motorMaxRpm : live.value.ecuLimiterRpm
+  return isNumber(maximum) && maximum > 0 ? Math.min(100, Math.max(0, live.value.rpm / maximum * 100)) : 0
+})
 const temperaturePercent = computed(() => typeof live.value.coolantTemp === 'number' ? Math.min(100, Math.max(0, live.value.coolantTemp / 130 * 100)) : 0)
 const ratedTorque = computed(() => live.value.ratedTorqueNm ?? engine.value.torqueNm)
 const ratedPowerHp = computed(() => live.value.ratedPowerHp ?? engine.value.powerHp)
@@ -295,7 +322,25 @@ const nextServiceMiles = computed(() => {
   return due.length ? Math.max(0, Math.min(...due)) : null
 })
 const nextServiceText = computed(() => isNumber(nextServiceMiles.value) ? `${whole(nextServiceMiles.value)} mi` : null)
-const powerLimited = computed(() => engine.value.liveMetrics?.powerCapActive === true || radiator.value.liveMetrics?.powerLimitActive === true)
+const motorTorqueAvailability = computed(() => isNumber(live.value.ratedTorqueNm) && live.value.ratedTorqueNm > 0 && isNumber(live.value.motorTorqueLimitNm)
+  ? Math.min(1, Math.max(0, live.value.motorTorqueLimitNm / live.value.ratedTorqueNm))
+  : null)
+const hasMeasuredMotorRestriction = computed(() => isNumber(motorTorqueAvailability.value) && motorTorqueAvailability.value < 0.995)
+const recentMotorTorqueAvailability = computed(() => isNumber(live.value.recentMotorTorqueAvailability)
+  ? Math.min(1, Math.max(0, live.value.recentMotorTorqueAvailability))
+  : null)
+const motorOutputRestricted = computed(() => live.value.isElectric && (
+  hasMeasuredMotorRestriction.value
+  || engine.value.liveMetrics?.powerCapActive === true
+  || radiator.value.liveMetrics?.powerLimitActive === true
+))
+const motorRestrictionNeedsAttention = computed(() => motorOutputRestricted.value
+  && hasMeasuredMotorRestriction.value && motorTorqueAvailability.value < 0.9)
+const motorOutputText = computed(() => motorOutputRestricted.value
+  ? (hasMeasuredMotorRestriction.value ? `Reduced — ${percent(motorTorqueAvailability.value)} available` : 'Reduced')
+  : 'Normal')
+const motorUnavailable = computed(() => live.value.isElectric && live.value.motorDisabled === true && live.value.motorBroken !== true && live.value.motorHasEnergy === true)
+const powerLimited = computed(() => motorOutputRestricted.value || engine.value.liveMetrics?.powerCapActive === true || radiator.value.liveMetrics?.powerLimitActive === true)
 const powerLimitReason = computed(() => {
   const cooling = radiator.value.liveMetrics?.powerLimitActive === true
   const reported = cooling ? radiator.value.liveMetrics?.powerLimitReason : engine.value.liveMetrics?.powerLimitReason
@@ -330,6 +375,14 @@ const gearboxDisplayName = computed(() => live.value.gearboxName || (
     : transmissionType.value
 ))
 const hasDifferentialData = computed(() => Boolean(live.value.frontDifferential?.name || live.value.centerCoupling?.name || live.value.rearDifferential?.name))
+const driveLayout = computed(() => live.value.frontDifferential?.name && live.value.rearDifferential?.name
+  ? 'All-wheel drive'
+  : live.value.frontDifferential?.name
+    ? 'Front-wheel drive'
+    : live.value.rearDifferential?.name
+      ? 'Rear-wheel drive'
+      : null)
+const electricFinalDriveRatio = computed(() => live.value.frontDifferential?.finalDriveRatio ?? live.value.rearDifferential?.finalDriveRatio)
 const hasClutchData = computed(() => Boolean(live.value.clutchName) || isNumber(live.value.clutchRatedTorqueNm) || isBoolean(live.value.clutchDamaged))
 const clutchCapacityReduced = computed(() => isNumber(live.value.clutchRatedTorqueNm)
   && isNumber(live.value.clutchAvailableTorqueNm)
@@ -477,6 +530,41 @@ function buildDiagnosticFindings() {
   const findings = []
   const add = finding => {
     if (!findings.some(existing => existing.key === finding.key)) findings.push(finding)
+  }
+
+  if (live.value.isElectric) {
+    if (live.value.motorBroken === true) add({
+      key: 'motor-broken', severity: 'high', title: 'Drive motor fault detected',
+      cause: 'BeamNG reports that the installed drive motor is mechanically broken.',
+      effect: 'The motor cannot provide normal propulsion.',
+      action: 'Inspect and repair or replace the damaged drive motor.',
+    })
+    if (motorUnavailable.value) add({
+      key: 'motor-unavailable', severity: 'high', title: 'Drive motor unavailable',
+      cause: 'The motor is disabled even though connected battery energy remains available.',
+      effect: 'Propulsion from the affected motor is unavailable.',
+      action: 'Inspect the motor, its controller, and associated powertrain damage.',
+    })
+    if (motorOutputRestricted.value) add({
+      key: 'propulsion-restriction', severity: motorRestrictionNeedsAttention.value ? 'high' : 'medium',
+      attention: motorRestrictionNeedsAttention.value,
+      title: motorRestrictionNeedsAttention.value ? 'Propulsion output restricted' : 'Propulsion output reduced under load',
+      cause: hasMeasuredMotorRestriction.value
+        ? `The current motor torque limit is ${percent(motorTorqueAvailability.value)} of its installed rating.`
+        : 'The vehicle maintenance system has applied an output restriction.',
+      effect: 'Available propulsion torque or power is currently reduced.',
+      action: motorRestrictionNeedsAttention.value
+        ? 'Review motor operation and service condition; inspect the powertrain if the restriction persists.'
+        : 'No immediate action is required. Continue monitoring under-load availability for further reduction.',
+    })
+    if (!motorOutputRestricted.value && isNumber(recentMotorTorqueAvailability.value)) add({
+      key: 'recent-propulsion-restriction', severity: 'medium', attention: false, recent: true,
+      title: 'Recently observed — propulsion output reduced under load',
+      cause: `The lowest recently observed motor torque limit was ${percent(recentMotorTorqueAvailability.value)} of its installed rating.`,
+      effect: 'The reduction was present under load; current stationary output is no longer restricted.',
+      action: 'No immediate action is required. Continue monitoring if available output falls further.',
+    })
+    return findings.slice(0, 4)
   }
 
   const recentDamageEvents = Array.isArray(live.value.recentDamageEvents)

@@ -6,6 +6,8 @@ local RECENT_EVENT_SECONDS = 300
 local timer = 0
 local recentClutchHeatSeconds = 0
 local recentClutchHeatPeakC = nil
+local recentMotorRestrictionSeconds = 0
+local recentMotorTorqueAvailability = nil
 local recentDamageEvents = {}
 
 -- Native BeamNG damage states that are meaningful to a scan-tool user. Device-
@@ -73,10 +75,36 @@ local function getClutch()
   return devices and devices[1] or nil
 end
 
+local function getElectricBatteryCharge()
+  if not (energyStorage and energyStorage.getStorages) then return nil end
+  local storedEnergy, capacity = 0, 0
+  for _, storage in pairs(energyStorage.getStorages() or {}) do
+    if type(storage) == "table" and storage.type == "electricBattery" then
+      local storageEnergy = number(storage.storedEnergy)
+      local storageCapacity = number(storage.energyCapacity)
+      if storageEnergy and storageCapacity and storageCapacity > 0 then
+        storedEnergy = storedEnergy + storageEnergy
+        capacity = capacity + storageCapacity
+      end
+    end
+  end
+  if capacity <= 0 then return nil end
+  local ratio = storedEnergy / capacity
+  return ratio >= 0 and ratio <= 1 and ratio or nil
+end
+
 local function normalized(value)
   value = number(value)
   if value == nil or value < 0 or value > 1 then return nil end
   return value
+end
+
+local function normalizedEngineLoad(value)
+  value = number(value)
+  if value == nil or value > 1 then return nil end
+  -- Electric motors report negative load while regenerating. The scanner is
+  -- stationary-focused, so keep the load row stable at zero during coast-down.
+  return math.max(0, value)
 end
 
 local function powerHp(raw)
@@ -255,9 +283,18 @@ local function findClutchAndFlywheelNames()
 end
 
 local function finalDriveRatio(axis)
-  local _, name = findActivePart("finaldrive_" .. axis:lower(), "final drive")
-  if not name then return nil end
-  return number(name:match("([%d%.]+)%s*:%s*1"))
+  local activeParts = v and v.data and v.data.activePartsData or nil
+  if type(activeParts) ~= "table" then return nil end
+  local axisSuffix = "_" .. axis:lower()
+  for _, part in pairs(activeParts) do
+    local slotType = tostring(type(part) == "table" and part.slotType or ""):lower()
+    local name = tostring(type(part) == "table" and part.information and part.information.name or "")
+    if slotType:find("finaldrive", 1, true) and slotType:sub(-2) == axisSuffix
+      and name:lower():find("final drive", 1, true) then
+      return number(name:match("([%d%.]+)%s*:%s*1"))
+    end
+  end
+  return nil
 end
 
 local function displayedTuningValue(part, title, actualValue)
@@ -354,6 +391,7 @@ end
 local function buildState()
   local ev = electrics and electrics.values or {}
   local engine = getEngine()
+  local isElectric = engine and engine.type == "electricMotor" or false
   local gearbox = getGearbox()
   local clutch = getClutch()
   local clutchConfig = v and v.data and v.data.clutch or nil
@@ -379,6 +417,7 @@ local function buildState()
   local _, superchargerName = findActivePart("", "supercharger")
   -- Output figures describe the current installed configuration's peak output.
   local ratedTorque = engine and firstNumber(engine.maxTorque, engine.torqueData and engine.torqueData.maxTorque) or nil
+  local ratedPower = engine and powerHp(firstNumber(engine.maxPower, engine.torqueData and engine.torqueData.maxPower)) or nil
   -- maxTorqueRating is BeamNG's overtorque damage threshold, not engine output.
   local overtorqueThreshold = engine and firstNumber(
     engine.maxTorqueRating,
@@ -389,11 +428,22 @@ local function buildState()
   local ecuLimiterRpm = engine and firstNumber(
     engine.revLimiterRPM
   ) or nil
+  local propulsionRpm = isElectric
+    and firstNumber(engine.outputRPM, engine.outputAV1 and engine.outputAV1 * 9.549296596)
+    or firstNumber(ev.rpm, engine and engine.outputAV1 and engine.outputAV1 * 9.549296596)
+  if isElectric and propulsionRpm then propulsionRpm = math.abs(propulsionRpm) end
+  local motorBroken, motorDisabled, motorHasEnergy = nil, nil, nil
+  if isElectric then
+    motorBroken = reportedBoolean(engine, "isBroken")
+    motorDisabled = reportedBoolean(engine, "isDisabled")
+    motorHasEnergy = reportedBoolean(engine, "hasEnergy")
+  end
   return {
     vehicleId = obj:getId(),
     vehicleName = v and v.config and (v.config.name or v.config.model) or nil,
-    rpm = firstNumber(ev.rpm, engine and engine.outputAV1 and engine.outputAV1 * 9.549296596),
-    engineLoad = engine and normalized(engine.engineLoad) or nil,
+    isElectric = isElectric,
+    rpm = propulsionRpm,
+    engineLoad = engine and (isElectric and normalizedEngineLoad(engine.engineLoad) or normalized(engine.engineLoad)) or nil,
     idleRpm = engine and engine.idleAV and engine.idleAV * 9.549296596 or nil,
     ecuLimiterRpm = ecuLimiterRpm,
     revLimiterType = engine and engine.revLimiterType or nil,
@@ -404,13 +454,21 @@ local function buildState()
     ignition = firstNumber(ev.ignitionLevel, ev.ignition),
     engineRunning = firstReportedBoolean(ev, "engineRunning", "running"),
     fuel = normalized(ev.fuel),
+    batteryCharge = isElectric and getElectricBatteryCharge() or nil,
     checkEngine = reportedBoolean(ev, "checkengine"),
     coolantTemp = firstNumber(ev.watertemp, ev.coolantTemperature, thermals and thermals.coolantTemperature),
     oilTemp = firstNumber(ev.oiltemp, ev.oilTemperature, thermals and thermals.oilTemperature),
     ratedTorqueNm = ratedTorque,
+    motorTorqueLimitNm = isElectric and engine and number(engine.maxTorqueLimit) or nil,
+    motorBroken = motorBroken,
+    motorDisabled = motorDisabled,
+    motorHasEnergy = motorHasEnergy,
+    recentMotorTorqueAvailability = recentMotorRestrictionSeconds > 0 and recentMotorTorqueAvailability or nil,
     overtorqueThresholdNm = overtorqueThreshold,
     overrevThresholdRpm = overrevThresholdRpm,
-    ratedPowerHp = engine and powerHp(firstNumber(engine.maxPower, engine.torqueData and engine.torqueData.maxPower)) or nil,
+    ratedPowerHp = ratedPower,
+    ratedPowerKw = isElectric and ratedPower and ratedPower * 0.735499 or nil,
+    motorMaxRpm = isElectric and firstNumber(engine.maxRPM, engine.maxAV and engine.maxAV * 9.549296596) or nil,
     engineName = engineName,
     pistonRingsDamaged = reportedBoolean(thermals, "pistonRingsDamaged"),
     headGasketDamaged = reportedBoolean(thermals, "headGasketDamaged"),
@@ -439,12 +497,26 @@ local function updateGFX(dt)
   local elapsed = number(dt) or 0
   timer = timer + elapsed
   recentClutchHeatSeconds = math.max(0, recentClutchHeatSeconds - elapsed)
+  recentMotorRestrictionSeconds = math.max(0, recentMotorRestrictionSeconds - elapsed)
   updateRecentDamageEvents(elapsed)
   if timer < UPDATE_INTERVAL then return end
   timer = 0
   local ev = electrics and electrics.values or {}
   local engine = getEngine()
   local clutch = getClutch()
+  if engine and engine.type == "electricMotor" then
+    local ratedTorque = number(engine.maxTorque)
+    local torqueLimit = number(engine.maxTorqueLimit)
+    local motorLoad = number(engine.engineLoad)
+    if ratedTorque and ratedTorque > 0 and torqueLimit and motorLoad and motorLoad >= 0.35 then
+      local availability = math.max(0, math.min(1, torqueLimit / ratedTorque))
+      if availability < 0.995 then
+        recentMotorTorqueAvailability = math.min(recentMotorTorqueAvailability or availability, availability)
+        recentMotorRestrictionSeconds = RECENT_EVENT_SECONDS
+      end
+    end
+  end
+  if recentMotorRestrictionSeconds <= 0 then recentMotorTorqueAvailability = nil end
   local clutchTemp = clutch and number(clutch.clutchTemperature) or nil
   local clutchWarningTemp = clutch and number(clutch.clutchWarningTemp) or nil
   if clutchTemp and clutchWarningTemp and clutchTemp >= clutchWarningTemp then
