@@ -56,20 +56,54 @@ local function firstNumber(...)
   return nil
 end
 
+local function isCombustionEngine(device)
+  return tostring(device and device.type or ""):find("combustionEngine", 1, true) == 1
+end
+
 local function getEngine()
   if powertrain and powertrain.getDevice then
     local mainEngine = powertrain.getDevice("mainEngine")
     if mainEngine then return mainEngine end
   end
   local devices = powertrain and powertrain.getDevicesByCategory and powertrain.getDevicesByCategory("engine") or nil
+  for _, device in pairs(devices or {}) do
+    if isCombustionEngine(device) then return device end
+  end
   return devices and devices[1] or nil
+end
+
+local function drivesWheels(device, visited)
+  if type(device) ~= "table" then return false end
+  visited = visited or {}
+  if visited[device] then return false end
+  visited[device] = true
+  if device.type == "differential" then return true end
+  for _, child in ipairs(device.children or {}) do
+    if drivesWheels(child, visited) then return true end
+  end
+  return false
+end
+
+local function findDescendantByType(device, targetType, visited)
+  if type(device) ~= "table" then return nil end
+  visited = visited or {}
+  if visited[device] then return nil end
+  visited[device] = true
+  if device.type == targetType then return device end
+  for _, child in ipairs(device.children or {}) do
+    local found = findDescendantByType(child, targetType, visited)
+    if found then return found end
+  end
+  return nil
 end
 
 local function getElectricMotors()
   local result = {}
   local devices = powertrain and powertrain.getDevicesByCategory and powertrain.getDevicesByCategory("engine") or nil
   for _, device in pairs(devices or {}) do
-    if device.type == "electricMotor" then result[#result + 1] = device end
+    -- Generator machines also use BeamNG's electricMotor device type. Only
+    -- report motors whose output path reaches a differential as traction motors.
+    if device.type == "electricMotor" and drivesWheels(device) then result[#result + 1] = device end
   end
   table.sort(result, function(a, b)
     return tostring(a.name or "") < tostring(b.name or "")
@@ -252,6 +286,13 @@ local function findEngineName()
   local activeParts = v and v.data and v.data.activePartsData or nil
   if type(activeParts) ~= "table" then return nil end
   for _, part in pairs(activeParts) do
+    local partName = tostring(type(part) == "table" and part.information and part.information.name or "")
+    local lowerName = partName:lower()
+    if lowerName:find("generator", 1, true) and lowerName:find("engine", 1, true) then
+      return partName
+    end
+  end
+  for _, part in pairs(activeParts) do
     local slotType = tostring(type(part) == "table" and part.slotType or ""):lower()
     local partName = tostring(type(part) == "table" and part.information and part.information.name or "")
     local lowerName = partName:lower()
@@ -267,14 +308,17 @@ end
 local function electricMotorPosition(device)
   local name = tostring(device and device.name or ""):lower()
   if name:find("front", 1, true) then return "Front" end
+  local rearIndex = name:match("rear.-(%d+)$")
+  if rearIndex then return "Rear axle " .. rearIndex end
   if name:find("rear", 1, true) then return "Rear" end
   return nil
 end
 
 local function findElectricMotorName(device)
   local position = electricMotorPosition(device)
-  if position == "Rear" then
-    local _, name = findActivePart("differential_r", "motor")
+  if position and position:find("Rear", 1, true) then
+    local rearIndex = tostring(device and device.name or ""):match("(%d+)$")
+    local _, name = findActivePart(rearIndex and ("differential_r_" .. rearIndex) or "differential_r", "electric drive")
     if name then return name end
   elseif position == "Front" then
     local name = findEngineName()
@@ -285,6 +329,20 @@ end
 
 local function electricMotorData(device)
   local ratedPowerHp = powerHp(firstNumber(device.maxPower, device.torqueData and device.torqueData.maxPower))
+  local rearIndex = tostring(device and device.name or ""):match("(%d+)$")
+  local reduction = findDescendantByType(device, "rangeBox")
+  local differential = findDescendantByType(device, "differential")
+  local reductionName, differentialName = nil, nil
+  if rearIndex then
+    local _
+    _, reductionName = findActivePart("ev_reduction_r_" .. rearIndex, nil)
+    _, differentialName = findActivePart("ev_differential_r_" .. rearIndex, "differential")
+  end
+  local reductionRatios = {}
+  for _, ratio in pairs(reduction and reduction.gearRatios or {}) do
+    if number(ratio) then reductionRatios[#reductionRatios + 1] = number(ratio) end
+  end
+  table.sort(reductionRatios, function(a, b) return a > b end)
   return {
     id = tostring(device.name or "electricMotor"),
     position = electricMotorPosition(device),
@@ -296,6 +354,12 @@ local function electricMotorData(device)
     ratedPowerHp = ratedPowerHp,
     ratedPowerKw = ratedPowerHp and ratedPowerHp * 0.735499 or nil,
     maxRpm = firstNumber(device.maxRPM, device.maxAV and device.maxAV * 9.549296596),
+    reductionName = reductionName,
+    reductionRatios = reductionRatios,
+    reductionRatio = reduction and number(reduction.gearRatio) or nil,
+    reductionMode = reduction and reduction.mode or nil,
+    differentialName = differentialName,
+    finalDriveRatio = differential and number(differential.gearRatio) or nil,
     broken = reportedBoolean(device, "isBroken"),
     disabled = reportedBoolean(device, "isDisabled"),
     hasEnergy = reportedBoolean(device, "hasEnergy"),
@@ -442,13 +506,19 @@ local function buildState()
   local ev = electrics and electrics.values or {}
   local engine = getEngine()
   local electricMotorDevices = getElectricMotors()
-  local isElectric = engine and engine.type == "electricMotor" or false
+  local hasElectricDrive = #electricMotorDevices > 0
+  local isHybrid = hasElectricDrive and isCombustionEngine(engine)
+  local isElectric = hasElectricDrive and not isHybrid
   local motors = {}
+  local propulsionRpm = nil
+  local propulsionLoad = nil
   local worstMotorAvailability = nil
   local worstMotor = nil
   for _, device in ipairs(electricMotorDevices) do
     local motor = electricMotorData(device)
     motors[#motors + 1] = motor
+    if motor.rpm then propulsionRpm = math.max(propulsionRpm or 0, motor.rpm) end
+    if motor.load then propulsionLoad = math.max(propulsionLoad or 0, motor.load) end
     if motor.ratedTorqueNm and motor.ratedTorqueNm > 0 and motor.torqueLimitNm then
       local availability = math.max(0, math.min(1, motor.torqueLimitNm / motor.ratedTorqueNm))
       if not worstMotorAvailability or availability < worstMotorAvailability then
@@ -493,10 +563,8 @@ local function buildState()
   local ecuLimiterRpm = engine and firstNumber(
     engine.revLimiterRPM
   ) or nil
-  local propulsionRpm = isElectric
-    and firstNumber(engine.outputRPM, engine.outputAV1 and engine.outputAV1 * 9.549296596)
-    or firstNumber(ev.rpm, engine and engine.outputAV1 and engine.outputAV1 * 9.549296596)
-  if isElectric and propulsionRpm then propulsionRpm = math.abs(propulsionRpm) end
+  local engineRpm = engine and math.abs(firstNumber(engine.outputRPM, engine.outputAV1 and engine.outputAV1 * 9.549296596) or 0) or nil
+  if not hasElectricDrive then propulsionRpm = firstNumber(ev.rpm, engineRpm) end
   local motorBroken, motorDisabled, motorHasEnergy = nil, nil, nil
   for _, motor in ipairs(motors) do
     if motor.broken ~= nil then motorBroken = motorBroken == true or motor.broken end
@@ -507,8 +575,12 @@ local function buildState()
     vehicleId = obj:getId(),
     vehicleName = v and v.config and (v.config.name or v.config.model) or nil,
     isElectric = isElectric,
+    isHybrid = isHybrid,
+    hasElectricDrive = hasElectricDrive,
     motors = motors,
     rpm = propulsionRpm,
+    engineRpm = engineRpm,
+    propulsionLoad = propulsionLoad,
     engineLoad = engine and (isElectric and normalizedEngineLoad(engine.engineLoad) or normalized(engine.engineLoad)) or nil,
     idleRpm = engine and engine.idleAV and engine.idleAV * 9.549296596 or nil,
     ecuLimiterRpm = ecuLimiterRpm,
@@ -519,13 +591,19 @@ local function buildState()
     forcedInductionName = turbochargerName or superchargerName,
     ignition = firstNumber(ev.ignitionLevel, ev.ignition),
     engineRunning = firstReportedBoolean(ev, "engineRunning", "running"),
+    generatorRunning = isHybrid and engineRpm and engineRpm >= 100 or nil,
     fuel = normalized(ev.fuel),
-    batteryCharge = isElectric and getElectricBatteryCharge() or nil,
+    batteryCharge = hasElectricDrive and getElectricBatteryCharge() or nil,
     checkEngine = reportedBoolean(ev, "checkengine"),
-    coolantTemp = firstNumber(ev.watertemp, ev.coolantTemperature, thermals and thermals.coolantTemperature),
-    oilTemp = firstNumber(ev.oiltemp, ev.oilTemperature, thermals and thermals.oilTemperature),
-    ratedTorqueNm = worstMotor and worstMotor.ratedTorqueNm or ratedTorque,
-    motorTorqueLimitNm = worstMotor and worstMotor.torqueLimitNm or (isElectric and engine and number(engine.maxTorqueLimit) or nil),
+    coolantTemp = isCombustionEngine(engine)
+      and firstNumber(thermals and thermals.coolantTemperature, ev.coolantTemperature, ev.watertemp)
+      or firstNumber(ev.watertemp, ev.coolantTemperature, thermals and thermals.coolantTemperature),
+    oilTemp = isCombustionEngine(engine)
+      and firstNumber(thermals and thermals.oilTemperature, ev.oilTemperature, ev.oiltemp)
+      or firstNumber(ev.oiltemp, ev.oilTemperature, thermals and thermals.oilTemperature),
+    ratedTorqueNm = ratedTorque,
+    motorRestrictionRatedTorqueNm = worstMotor and worstMotor.ratedTorqueNm or nil,
+    motorTorqueLimitNm = worstMotor and worstMotor.torqueLimitNm or nil,
     motorBroken = motorBroken,
     motorDisabled = motorDisabled,
     motorHasEnergy = motorHasEnergy,
