@@ -51,15 +51,15 @@ function buildElectricDriveFindings(context) {
   return findings
 }
 
-function buildNativeEngineDamageFindings({ live, pistonRingsDamaged, nativeDamageFinding }) {
-  const findings = []
+function buildNativeDamageEventFindings({ live, nativeDamageFinding }) {
   const recentDamageEvents = Array.isArray(live.recentDamageEvents)
     ? live.recentDamageEvents
     : Object.values(live.recentDamageEvents || {})
-  for (const event of recentDamageEvents) {
-    const finding = nativeDamageFinding(event)
-    if (finding) findings.push(finding)
-  }
+  return recentDamageEvents.map(nativeDamageFinding).filter(Boolean)
+}
+
+function buildNativeEngineConditionFindings({ live, pistonRingsDamaged }) {
+  const findings = []
   if (live.engineHydrolocked) findings.push({ key: 'hydrolock', severity: 'high', title: 'Engine rotation obstructed', cause: 'Liquid intrusion into a combustion chamber is the likely cause.', effect: 'The engine cannot rotate safely.', action: 'Stop attempting to start the engine and inspect it before further operation.' })
   if (live.rodBearingsDamaged) findings.push({ key: 'rod-bearings', severity: 'high', title: 'Severe internal engine damage', cause: 'Bearing or lubrication-system damage is the likely cause.', effect: 'Continued operation may cause complete engine failure.', action: 'Stop the engine and repair the damaged long block.' })
   if (live.headGasketDamaged) findings.push({ key: 'head-gasket', severity: 'high', title: 'Combustion/cooling sealing fault', cause: 'Cylinder-head or head-gasket sealing failure is the likely cause.', effect: 'Cooling and combustion performance may be compromised.', action: 'Inspect and repair the cylinder head and gasket.' })
@@ -107,8 +107,8 @@ function buildDrivetrainFindings(context) {
 
 export function buildDiagnosticFindings(context) {
   const sources = context.live.isElectric
-    ? [buildPneumaticFindings(context), buildElectricDriveFindings(context)]
-    : [buildPneumaticFindings(context), buildNativeEngineDamageFindings(context), buildMaintenanceFindings(context), buildDrivetrainFindings(context)]
+    ? [buildPneumaticFindings(context), buildNativeDamageEventFindings(context), buildElectricDriveFindings(context)]
+    : [buildPneumaticFindings(context), buildNativeDamageEventFindings(context), buildNativeEngineConditionFindings(context), buildMaintenanceFindings(context), buildDrivetrainFindings(context)]
   const findings = sources.flat().filter((finding, index, all) => all.findIndex(candidate => candidate.key === finding.key) === index)
   if (!context.live.isElectric && context.live.checkEngine === true && !findings.some(finding => finding.attention !== false)) findings.push({ key: 'controller-warning', severity: 'medium', title: 'Powertrain warning active', cause: 'The vehicle controller has requested a warning, but no more specific supported cause is currently reported.', effect: 'A dashboard powertrain warning is active.', action: 'Review temperatures and live readings, then inspect the vehicle if the warning persists or returns.' })
   return findings.slice(0, 4)

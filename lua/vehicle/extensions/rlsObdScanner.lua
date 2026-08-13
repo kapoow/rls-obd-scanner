@@ -36,9 +36,18 @@ local trackedDamage = {
     exhaustBroken = true,
     blockMelted = true,
     cylinderWallsMelted = true,
+    turbochargerHot = true,
+    inductionSystemDamaged = true,
   },
   gearbox = {
     synchroWear = true,
+  },
+  pressureTank = {
+    deformationLeak = true,
+    breakLeak = true,
+  },
+  drivingDynamics = {
+    systemStateDegraded = true,
   },
 }
 
@@ -119,6 +128,14 @@ end
 local function getClutch()
   local devices = powertrain and powertrain.getDevicesByCategory and powertrain.getDevicesByCategory("clutch") or nil
   return devices and devices[1] or nil
+end
+
+local function hasDrivingDynamicsControl()
+  if not (controller and controller.getControllersFromPath) then return false end
+  for _, deviceController in pairs(controller.getControllersFromPath("drivingDynamics/") or {}) do
+    if deviceController.typeName == "drivingDynamics/CMU" then return true end
+  end
+  return false
 end
 
 local function getElectricBatteryCharge()
@@ -601,6 +618,7 @@ local function buildState()
     airPressurePa = firstNumber(ev.mainAirTank_pressureRelative),
     lowAirPressure = reportedBoolean(ev, "lowAirPressure"),
     parkingBrakeApplied = firstReportedBoolean(ev, "parkingbrake", "parkingbrake_input"),
+    hasDrivingDynamicsControl = hasDrivingDynamicsControl(),
     checkEngine = reportedBoolean(ev, "checkengine"),
     coolantTemp = isCombustionEngine(engine)
       and firstNumber(thermals and thermals.coolantTemperature, ev.coolantTemperature, ev.watertemp)

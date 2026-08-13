@@ -28,17 +28,27 @@ or maintenance data.
 
 - BeamNG.drive
 - RLS Career Overhaul
-- RLS Maintenance Mode enabled for the current career save
 
 The scanner is designed for the RLS career phone and is not intended to replace
 BeamNG's standard vehicle apps outside career mode.
 
+## Maintenance Mode
+
+The scanner works whether RLS Maintenance Mode is enabled or disabled for the
+current career save. When enabled, the Service tab and maintenance-derived
+findings use RLS vehicle condition data. When disabled, those values are
+suppressed while native BeamNG readings and supported diagnostic events remain
+available.
+
+The scanner reads RLS's actual per-save Maintenance Mode state and does not
+initialize, repair, or otherwise modify maintenance data.
+
 ## Current limitations
 
-- Support for using the scanner without RLS Maintenance Mode is planned for the
-  next update. Native vehicle readings may still be available, but service
-  condition information is not currently reliable while maintenance mode is
-  disabled.
+- Parallel, series-parallel, and mild-hybrid layouts have not yet been validated
+  and may expose their powertrains differently.
+- Unsupported or vehicle-specific damage states are hidden rather than assigned
+  guessed scan-tool descriptions.
 
 ## Installation
 

@@ -123,6 +123,7 @@
         <section v-if="!live.isElectric" class="card">
           <h2>{{ live.isHybrid ? 'Generator engine diagnostics' : 'Diagnostics' }}</h2>
           <StatusRow v-if="maintenanceOnline" label="Output restriction" :bad="powerLimited && powerLimitReason !== 'Old engine top-end loss'" :warn="powerLimited && powerLimitReason === 'Old engine top-end loss'" :text="powerLimitText" />
+          <StatusRow v-if="live.forcedInductionName || live.forcedInductionType" label="Forced induction" :bad="inductionDamageActive" :warn="turboHotActive" :text="inductionDamageActive ? 'Fault detected' : turboHotActive ? 'Temperature high' : 'Normal'" />
           <StatusRow v-if="roughnessState" label="Combustion stability" :bad="roughnessState !== 'Normal'" :text="roughnessState" />
           <StatusRow v-if="misfireState" label="Estimated misfire risk" :bad="misfireState !== 'Normal'" :text="misfireState" />
           <StatusRow v-if="maintenanceOnline && engine.activeSymptom" label="Active condition" bad :text="engine.activeSymptomLabel || 'Fault detected'" />
@@ -203,6 +204,7 @@
         <section v-if="isNumber(live.airPressurePa)" class="card grid">
           <Metric label="Air pressure" :value="airPressure(live.airPressurePa)" :warn="live.lowAirPressure === true" />
           <Metric v-if="isBoolean(live.lowAirPressure)" label="Air system" :value="live.lowAirPressure ? 'Pressure low' : 'Normal'" :warn="live.lowAirPressure" />
+          <Metric label="Pressure tank" :value="pressureTankLeakActive ? 'Leak detected' : 'Normal'" :warn="pressureTankLeakActive" />
           <Metric v-if="isBoolean(live.parkingBrakeApplied)" label="Parking brake" :value="live.parkingBrakeApplied ? 'Applied' : 'Released'" :warn="live.lowAirPressure && live.parkingBrakeApplied" />
         </section>
 
@@ -213,9 +215,10 @@
           <DifferentialBlock label="Rear differential" :data="live.rearDifferential" :hide-final-drive="live.isElectric" />
         </section>
 
-        <section v-if="!live.hasElectricDrive && hasDrivetrainStatus" class="card">
+        <section v-if="hasDrivetrainStatus" class="card">
           <h2>Drivetrain status</h2>
           <StatusRow v-if="isBoolean(live.clutchDamaged)" label="Clutch" :bad="live.clutchDamaged" :text="live.clutchDamaged ? 'Fault detected' : 'Normal'" />
+          <StatusRow v-if="live.hasDrivingDynamicsControl" label="Vehicle stability control" :bad="stabilityControlDegraded" :text="stabilityControlDegraded ? 'Degraded' : 'Normal'" />
           <StatusRow v-if="maintenanceOnline && transmission.activeSymptom" label="Active condition" bad :text="transmission.activeSymptomLabel || 'Fault detected'" />
           <div v-for="risk in diagnosticRisks(transmission.riskFlags)" :key="risk.key" class="risk" :class="risk.severity">
             <b>{{ diagnosticRiskLabel(risk) }}</b><span v-if="diagnosticRiskDetail(risk)">{{ diagnosticRiskDetail(risk) }}</span>
@@ -343,6 +346,11 @@ const NATIVE_DAMAGE_DEFINITIONS = {
   blockMelted: { severity: 'high', title: 'Engine block thermal failure', cause: 'Extreme temperature damaged the engine block.', effect: 'The engine cannot operate safely.', action: 'Stop the engine and replace or rebuild the damaged assembly.' },
   cylinderWallsMelted: { severity: 'high', title: 'Cylinder wall thermal failure', cause: 'Extreme temperature damaged the cylinder walls.', effect: 'The engine cannot operate safely.', action: 'Stop the engine and replace or rebuild the damaged assembly.' },
   synchroWear: { title: 'Gear synchronizer wear observed', cause: 'BeamNG reported synchronizer stress during a gear change.', effect: 'Gear engagement may become difficult or noisy.', action: 'Use the clutch fully and avoid forcing gear engagement.' },
+  turbochargerHot: { title: 'Turbocharger temperature high', cause: 'BeamNG reports that turbocharger temperature is above its normal operating range.', effect: 'Boost performance or turbocharger durability may be affected.', action: 'Reduce engine load and allow the turbocharger to cool.' },
+  inductionSystemDamaged: { severity: 'high', title: 'Forced-induction system damage', cause: 'BeamNG reports physical damage to the installed turbocharger or supercharger system.', effect: 'Boost pressure and engine output may be reduced.', action: 'Inspect and repair the forced-induction system.' },
+  deformationLeak: { severity: 'high', title: 'Pneumatic pressure-tank leak', cause: 'Tank deformation has caused a pneumatic-system leak.', effect: 'Stored air pressure may fall and pneumatic systems may become unavailable.', action: 'Inspect the pressure tank and pneumatic lines before continued operation.' },
+  breakLeak: { severity: 'high', title: 'Pneumatic pressure tank damaged', cause: 'BeamNG reports a major leak from a broken pressure tank or connection.', effect: 'Stored air pressure may be lost rapidly.', action: 'Inspect and repair the damaged pressure tank before continued operation.' },
+  systemStateDegraded: { title: 'Vehicle stability control degraded', cause: 'BeamNG reports that the driving-dynamics control system is operating in a degraded state.', effect: 'Stability or traction assistance may be limited.', action: 'Drive cautiously and inspect the stability-control system if the warning persists.' },
 }
 
 const { api, units } = useBridge()
@@ -498,6 +506,14 @@ const clutchTemperatureHigh = computed(() => isNumber(live.value.clutchTempC) &&
   && live.value.clutchTempC >= live.value.clutchMaxSafeTempC)
 const clutchTemperatureElevated = computed(() => !clutchTemperatureHigh.value && isNumber(live.value.clutchTempC)
   && isNumber(live.value.clutchWarningTempC) && live.value.clutchTempC >= live.value.clutchWarningTempC)
+const nativeDamageEvents = computed(() => Array.isArray(live.value.recentDamageEvents)
+  ? live.value.recentDamageEvents
+  : Object.values(live.value.recentDamageEvents || {}))
+const nativeDamageActive = (group, name) => nativeDamageEvents.value.some(event => event.group === group && event.name === name && event.active === true)
+const turboHotActive = computed(() => nativeDamageActive('engine', 'turbochargerHot'))
+const inductionDamageActive = computed(() => nativeDamageActive('engine', 'inductionSystemDamaged'))
+const pressureTankLeakActive = computed(() => nativeDamageActive('pressureTank', 'deformationLeak') || nativeDamageActive('pressureTank', 'breakLeak'))
+const stabilityControlDegraded = computed(() => nativeDamageActive('drivingDynamics', 'systemStateDegraded'))
 const diagnosticFindings = computed(() => buildDiagnosticFindings({
   live: live.value,
   engine: engine.value,
@@ -562,7 +578,7 @@ const clutchCapacityReduced = computed(() => isNumber(live.value.clutchRatedTorq
   && live.value.clutchAvailableTorqueNm < live.value.clutchRatedTorqueNm * 0.97)
 const hasDrivetrainStatus = computed(() => isBoolean(live.value.clutchDamaged) || Boolean(
   maintenanceOnline.value && transmission.value.activeSymptom
-) || diagnosticRisks(transmission.value.riskFlags).length > 0)
+) || diagnosticRisks(transmission.value.riskFlags).length > 0 || live.value.hasDrivingDynamicsControl === true)
 const maintenanceCategories = computed(() => [
   { key: 'engine', label: 'Engine', data: engine.value },
   { key: 'radiator', label: 'Cooling', data: radiator.value },
