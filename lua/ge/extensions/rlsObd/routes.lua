@@ -6,8 +6,6 @@ local TAG = "rlsObd_routes"
 local SOURCE = "rls-obd-scanner"
 local ROUTE = "phone-obd-scanner"
 local APP_ID = "rls-obd-scanner"
-local MONITOR_INTERVAL = 5
-local monitorTimer = MONITOR_INTERVAL
 
 local function careerActive()
   return career_career and career_career.isActive and career_career.isActive() == true
@@ -81,23 +79,16 @@ local function onExtensionLoaded()
   ensureVehicleMonitor()
 end
 
-local function onUpdate(dtReal)
-  monitorTimer = monitorTimer + (tonumber(dtReal) or 0)
-  if monitorTimer < MONITOR_INTERVAL then return end
-  monitorTimer = 0
-  ensureVehicleMonitor()
-end
-
 local function onVehicleSwitched(_, _, player)
   if player ~= nil and player ~= 0 then return end
-  monitorTimer = MONITOR_INTERVAL
   ensureVehicleMonitor()
 end
 
 M.onExtensionLoaded = onExtensionLoaded
 M.onExtensionUnloaded = unregister
-M.onUpdate = onUpdate
+M.onCareerModulesActivated = ensureVehicleMonitor
 M.onVehicleSwitched = onVehicleSwitched
 M.onExperimentalMaintenanceModeChanged = onExperimentalMaintenanceModeChanged
+M.ensureVehicleMonitor = ensureVehicleMonitor
 M.register = register
 return M

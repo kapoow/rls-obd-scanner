@@ -81,18 +81,6 @@ local function getEngine()
   return devices and devices[1] or nil
 end
 
-local function drivesWheels(device, visited)
-  if type(device) ~= "table" then return false end
-  visited = visited or {}
-  if visited[device] then return false end
-  visited[device] = true
-  if device.type == "differential" then return true end
-  for _, child in ipairs(device.children or {}) do
-    if drivesWheels(child, visited) then return true end
-  end
-  return false
-end
-
 local function findDescendantByType(device, targetType, visited)
   if type(device) ~= "table" then return nil end
   visited = visited or {}
@@ -104,6 +92,10 @@ local function findDescendantByType(device, targetType, visited)
     if found then return found end
   end
   return nil
+end
+
+local function drivesWheels(device)
+  return findDescendantByType(device, "differential") ~= nil
 end
 
 local function getElectricMotors()
@@ -472,21 +464,22 @@ local function differentialData(axis)
   }
 end
 
-local function maintenanceManagerLoaded()
-  if not extensions then return false end
-  if extensions.isExtensionLoaded then
-    return extensions.isExtensionLoaded("maintenanceManager") == true
+local function getMaintenanceManager()
+  if not extensions then return nil end
+  if extensions.isExtensionLoaded and extensions.isExtensionLoaded("maintenanceManager") ~= true then
+    return nil
   end
-  return type(maintenanceManager) == "table"
+  local manager = extensions.maintenanceManager or rawget(_G, "maintenanceManager")
+  if type(manager) ~= "table" or type(manager.getSnapshot) ~= "function" then return nil end
+  return manager
 end
 
 local maintenanceModeEnabled = nil
 
 local function maintenanceNeedsAttention()
   if maintenanceModeEnabled ~= true then return false end
-  if not maintenanceManagerLoaded() then return false end
-  local manager = extensions and extensions.maintenanceManager or maintenanceManager
-  if type(manager) ~= "table" or type(manager.getSnapshot) ~= "function" then return false end
+  local manager = getMaintenanceManager()
+  if not manager then return false end
 
   local ok, snapshot = pcall(manager.getSnapshot)
   if not ok or type(snapshot) ~= "table" or type(snapshot.categories) ~= "table" then return false end
@@ -531,10 +524,21 @@ local function shouldRequestMil(engine, thermals, ev)
   return meaningfulRestriction and maintenanceNeedsAttention()
 end
 
-local function buildState()
-  local ev = electrics and electrics.values or {}
-  local engine = getEngine()
-  local electricMotorDevices = getElectricMotors()
+local function collectLiveDevices()
+  return {
+    ev = electrics and electrics.values or {},
+    engine = getEngine(),
+    electricMotors = getElectricMotors(),
+    gearbox = getGearbox(),
+    clutch = getClutch(),
+  }
+end
+
+local function buildState(devices)
+  devices = devices or collectLiveDevices()
+  local ev = devices.ev
+  local engine = devices.engine
+  local electricMotorDevices = devices.electricMotors
   local hasElectricDrive = #electricMotorDevices > 0
   local isHybrid = hasElectricDrive and isCombustionEngine(engine)
   local isElectric = hasElectricDrive and not isHybrid
@@ -556,8 +560,8 @@ local function buildState()
       end
     end
   end
-  local gearbox = getGearbox()
-  local clutch = getClutch()
+  local gearbox = devices.gearbox
+  local clutch = devices.clutch
   local clutchConfig = v and v.data and v.data.clutch or nil
   -- Only report a hardware rating when the installed JBeam explicitly defines
   -- one. Some clutch devices derive lockTorque from engine output at runtime;
@@ -678,10 +682,11 @@ local function updateGFX(dt)
   updateRecentDamageEvents(elapsed)
   if timer < UPDATE_INTERVAL then return end
   timer = 0
-  local ev = electrics and electrics.values or {}
-  local engine = getEngine()
-  local clutch = getClutch()
-  for _, motor in ipairs(getElectricMotors()) do
+  local devices = collectLiveDevices()
+  local ev = devices.ev
+  local engine = devices.engine
+  local clutch = devices.clutch
+  for _, motor in ipairs(devices.electricMotors) do
     local ratedTorque = number(motor.maxTorque)
     local torqueLimit = number(motor.maxTorqueLimit)
     local motorLoad = number(motor.engineLoad)
@@ -707,7 +712,7 @@ local function updateGFX(dt)
     ev.checkengine = true
   end
   if streams and streams.willSend and streams.willSend("rlsObdScannerData") then
-    gui.send("rlsObdScannerData", buildState())
+    gui.send("rlsObdScannerData", buildState(devices))
   end
 end
 

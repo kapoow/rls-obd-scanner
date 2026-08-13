@@ -65,7 +65,16 @@ async function injectApp() {
   const { catalogApps, availableApps } = mod.usePhoneApps()
   const { events } = useBridge()
   const app = definition()
-  let installed = false
+  let installed = null
+  const syncVehicleMonitor = () => {
+    try {
+      Promise.resolve(lua.rlsObd_routes.ensureVehicleMonitor()).catch(error => {
+        console.warn(TAG, "vehicle monitor sync failed", error)
+      })
+    } catch (error) {
+      console.warn(TAG, "vehicle monitor sync failed", error)
+    }
+  }
   const ensureCatalog = () => {
     const list = catalogApps
     if (Array.isArray(list?.value) && !list.value.some(item => item?.id === APP_ID)) list.value.push(app)
@@ -77,9 +86,11 @@ async function injectApp() {
     if (!installed && present) availableApps.value = availableApps.value.filter(item => item?.id !== APP_ID)
   }
   const onLayoutData = data => {
-    installed = Array.isArray(data?.installedAppIds) && data.installedAppIds.includes(APP_ID)
+    const nextInstalled = Array.isArray(data?.installedAppIds) && data.installedAppIds.includes(APP_ID)
+    installed = nextInstalled
     ensureCatalog()
     syncAvailable()
+    syncVehicleMonitor()
   }
   ensureCatalog()
   syncAvailable()

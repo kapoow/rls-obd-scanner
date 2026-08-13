@@ -365,11 +365,28 @@ const recentSymptoms = ref({})
 const liveUpdatedAt = ref(0)
 const displayVehicleName = ref(null)
 const isWalking = ref(null)
+let latestMaintenance = null
 
 const tabs = [
   { id: 'live', label: 'Overview' }, { id: 'engine', label: 'Engine' },
   { id: 'service', label: 'Service' }, { id: 'drive', label: 'Drivetrain' },
 ]
+
+function maintenanceMatchesVehicle(incoming) {
+  return incoming?.vehicleId == null || live.value.vehicleId == null
+    || incoming.vehicleId === live.value.vehicleId
+}
+
+function applyMaintenance(incoming) {
+  if (!incoming || !maintenanceMatchesVehicle(incoming)) return
+  const observed = { ...recentSymptoms.value }
+  for (const categoryName of ['engine', 'radiator', 'transmission']) {
+    const symptom = incoming.categories?.[categoryName]?.activeSymptom
+    if (symptom) observed[categoryName] = { symptom, observedAt: Date.now() / 1000 }
+  }
+  recentSymptoms.value = observed
+  maintenance.value = incoming
+}
 
 useStreams(['rlsObdScannerData', 'vehicleMaintenanceDebugData'], streams => {
   if (streams.rlsObdScannerData) {
@@ -377,6 +394,9 @@ useStreams(['rlsObdScannerData', 'vehicleMaintenanceDebugData'], streams => {
     if (streams.rlsObdScannerData.maintenanceModeEnabled !== true) {
       maintenance.value = {}
       recentSymptoms.value = {}
+      if (streams.rlsObdScannerData.maintenanceModeEnabled === false) latestMaintenance = null
+    } else {
+      applyMaintenance(latestMaintenance)
     }
     const clutchTemp = streams.rlsObdScannerData.clutchTempC
     const warningTemp = streams.rlsObdScannerData.clutchWarningTempC
@@ -388,15 +408,10 @@ useStreams(['rlsObdScannerData', 'vehicleMaintenanceDebugData'], streams => {
     }
     liveUpdatedAt.value = Date.now()
   }
-  if (streams.vehicleMaintenanceDebugData && live.value.maintenanceModeEnabled === true) {
+  if (streams.vehicleMaintenanceDebugData && live.value.maintenanceModeEnabled !== false) {
     const incoming = streams.vehicleMaintenanceDebugData
-    const observed = { ...recentSymptoms.value }
-    for (const categoryName of ['engine', 'radiator', 'transmission']) {
-      const symptom = incoming.categories?.[categoryName]?.activeSymptom
-      if (symptom) observed[categoryName] = { symptom, observedAt: Date.now() / 1000 }
-    }
-    recentSymptoms.value = observed
-    maintenance.value = incoming
+    latestMaintenance = incoming
+    if (live.value.maintenanceModeEnabled === true) applyMaintenance(incoming)
   }
 })
 
