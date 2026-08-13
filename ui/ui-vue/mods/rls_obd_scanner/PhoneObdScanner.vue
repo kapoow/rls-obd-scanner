@@ -3,10 +3,10 @@
     <div class="scanner">
       <header class="hero">
         <div>
-          <div class="eyebrow" :class="{ online: scannerConnected, caution: scannerNeedsIgnition }">{{ connectionEyebrow }}</div>
+          <div class="eyebrow" :class="{ online: scannerConnected, caution: scannerNeedsIgnition }">{{ connectionPresentation.eyebrow }}</div>
           <h1>{{ vehicleTitle }}</h1>
         </div>
-        <span class="status" :class="{ online: scannerConnected, caution: scannerNeedsIgnition }">{{ connectionStatus }}</span>
+        <span class="status" :class="{ online: scannerConnected, caution: scannerNeedsIgnition }">{{ connectionPresentation.status }}</span>
       </header>
 
       <nav class="tabs" aria-label="Scanner sections">
@@ -15,8 +15,8 @@
         </button>
       </nav>
 
-      <Notice v-if="!scannerConnected" :title="connectionNoticeTitle">
-        {{ connectionNoticeText }}
+      <Notice v-if="!scannerConnected" :title="connectionPresentation.noticeTitle">
+        {{ connectionPresentation.noticeText }}
       </Notice>
 
       <main v-else-if="tab === 'live'">
@@ -255,6 +255,95 @@ const DifferentialBlock = props => {
 }
 DifferentialBlock.props = ['label', 'data', 'hideFinalDrive']
 
+const POWER_LIMIT_DEFINITIONS = {
+  'Temporary symptom': {
+    status: 'Reduced — active engine fault',
+    cause: 'An active engine fault is limiting output.',
+  },
+  'Oil starvation': {
+    status: 'Reduced — lubrication fault',
+    cause: 'Insufficient lubrication is limiting engine output.',
+    action: 'Check the oil level and lubrication system before continued operation.',
+  },
+  'Severe ignition issue': {
+    status: 'Reduced — ignition fault',
+    cause: 'Ignition-system condition is limiting engine output.',
+  },
+  'Old engine top-end loss': {
+    status: 'Reduced — engine wear',
+    cause: 'Internal engine wear is reducing available output.',
+    action: 'No routine service is due. Test engine output or compression; rebuild or replace the worn engine to restore performance.',
+  },
+  'Maintenance torque protection': {
+    status: 'Reduced — service condition',
+    cause: 'Engine service condition has triggered protective output reduction.',
+  },
+  'Catastrophic cooling loss': {
+    cause: 'Severe coolant loss has triggered engine protection.',
+  },
+  Overheating: {
+    cause: 'Excessive engine temperature has triggered engine protection.',
+  },
+}
+
+const DIAGNOSTIC_RISK_DEFINITIONS = {
+  wear_spike: { label: 'Accelerated wear detected', detail: 'Wear rate is currently above normal.' },
+  high_output: { label: 'Powertrain load is increasing wear' },
+  limit_stress: { label: 'Transmission load is high', detail: 'Operating demand is close to the transmission capacity.' },
+  failure_window: { label: 'Transmission failure risk detected', detail: 'Continued operation may cause a mechanical failure.' },
+  engine_integrity: { label: 'Engine mechanical integrity is low' },
+  oil_starvation: { label: 'Severe oil starvation detected' },
+  oil_starvation_catastrophic: { label: 'Critical oil starvation detected' },
+  piston_rings: { label: 'Piston-ring damage detected', detail: 'Oil consumption is elevated.' },
+  cooling_catastrophic: { label: 'Critical cooling-system loss detected' },
+  cooling_severe: { label: 'Severe cooling-system loss detected' },
+  overheating: { label: 'Engine is overheating' },
+  critical_heat: { label: 'Coolant temperature is critically high' },
+  transmission_overheat: { label: 'Transmission is overheating' },
+  transmission_heat: { label: 'Transmission temperature is elevated' },
+  fluid_quality_critical: { label: 'Transmission-fluid condition is critical' },
+  fluid_quality_low: { label: 'Transmission-fluid condition is poor' },
+  slip_risk: { label: 'Transmission slip risk detected' },
+  fluid_loss: { label: 'Transmission-fluid level is critical' },
+  fluid_low: { label: 'Transmission-fluid level is low' },
+}
+
+const SERVICE_ITEM_LABELS = {
+  coolantIntegrity: 'Coolant condition',
+  fluidCondition: 'Fluid quality',
+}
+
+const TRANSMISSION_SYMPTOM_DEFINITIONS = {
+  roughShift: { label: 'Rough shift', effect: 'Gear changes may feel abrupt or harsh.' },
+  shiftDelay: { label: 'Shift delay', effect: 'Gear engagement or shifting may respond more slowly than expected.' },
+  slip: { label: 'Transmission slip', effect: 'Engine speed may rise without a matching increase in vehicle speed.' },
+}
+
+const NATIVE_DAMAGE_DEFINITIONS = {
+  overRevDanger: { title: 'Engine over-rev observed', cause: 'Engine speed exceeded the mechanical safe limit.', effect: 'Internal engine components may have been overstressed.', action: 'Avoid further over-revving and inspect the engine if abnormal operation follows.' },
+  mildOverrevDamage: { title: 'Engine over-rev damage', cause: 'BeamNG reported damage caused by excessive engine speed.', effect: 'Engine durability or performance may be reduced.', action: 'Inspect the engine before further high-speed operation.' },
+  catastrophicOverrevDamage: { severity: 'high', title: 'Severe engine over-rev damage', cause: 'Engine speed caused catastrophic internal stress.', effect: 'Major internal engine damage may have occurred.', action: 'Stop the engine and inspect it before further operation.' },
+  overTorqueDanger: { title: 'Engine overtorque observed', cause: 'Combustion torque exceeded the engine damage threshold.', effect: 'Internal engine components may have been overstressed.', action: 'Reduce load and inspect the engine if abnormal operation follows.' },
+  catastrophicOverTorqueDamage: { severity: 'high', title: 'Severe engine overtorque damage', cause: 'BeamNG reported catastrophic damage from excessive torque.', effect: 'Major internal engine damage may have occurred.', action: 'Stop the engine and inspect it before further operation.' },
+  coolantOverheating: { title: 'Coolant overheating', cause: 'Coolant temperature exceeded the vehicle warning threshold.', effect: 'Continued operation may damage the cooling system or engine.', action: 'Reduce load, stop safely, and allow the engine to cool.' },
+  oilOverheating: { title: 'Engine oil overheating', cause: 'Oil temperature exceeded the vehicle warning threshold.', effect: 'Lubrication performance may be reduced.', action: 'Reduce load and allow the engine oil to cool.' },
+  starvedOfOil: { title: 'Oil starvation observed', cause: 'BeamNG reported insufficient oil supply under the current vehicle motion.', effect: 'Engine bearings may have received inadequate lubrication.', action: 'Stop severe manoeuvres and inspect oil level if the warning returns.' },
+  oilLevelCritical: { severity: 'high', title: 'Critical engine oil level', cause: 'The engine reported an unsafe oil quantity.', effect: 'Lubrication loss may cause rapid engine damage.', action: 'Stop the engine and correct the oil level before continued operation.' },
+  oilLevelTooHigh: { title: 'Engine oil level too high', cause: 'The engine reported excessive oil quantity.', effect: 'Lubrication and crankcase operation may be affected.', action: 'Correct the oil level before continued operation.' },
+  engineIsHydrolocking: { title: 'Hydrolock risk observed', cause: 'Liquid intrusion obstructed engine rotation.', effect: 'Further starting attempts may cause severe internal damage.', action: 'Stop attempting to start the engine and inspect it.' },
+  engineReducedTorque: { title: 'Engine output reduced', cause: 'The vehicle controller reported reduced engine torque.', effect: 'Available engine performance was limited.', action: 'Review other findings and inspect the engine if the restriction returns.' },
+  engineDisabled: { title: 'Engine disabled', cause: 'The vehicle reported that the engine could not operate.', effect: 'Propulsion from the engine was unavailable.', action: 'Inspect active damage and engine systems before restarting.' },
+  engineLockedUp: { severity: 'high', title: 'Engine lock-up', cause: 'BeamNG reported that the engine could not rotate.', effect: 'The engine cannot operate normally.', action: 'Stop attempting to run the engine and inspect internal damage.' },
+  impactDamage: { title: 'Engine impact damage', cause: 'An impact damaged the engine assembly.', effect: 'Engine operation or durability may be compromised.', action: 'Inspect the engine and its mounts before continued operation.' },
+  radiatorLeak: { title: 'Radiator leak', cause: 'BeamNG reported cooling-system leakage from the radiator.', effect: 'Coolant loss may lead to overheating.', action: 'Inspect the radiator and coolant level before continued operation.' },
+  oilRadiatorLeak: { title: 'Engine oil cooler leak', cause: 'BeamNG reported oil leakage from the oil cooler.', effect: 'Oil loss may reduce lubrication.', action: 'Inspect the oil cooler and oil level before continued operation.' },
+  oilpanLeak: { title: 'Engine oil pan leak', cause: 'BeamNG reported oil leakage from the oil pan.', effect: 'Oil loss may reduce lubrication.', action: 'Inspect the oil pan and oil level before continued operation.' },
+  exhaustBroken: { title: 'Exhaust system damage', cause: 'BeamNG reported a broken exhaust connection.', effect: 'Exhaust flow, sound, or emissions behavior may be affected.', action: 'Inspect and repair the exhaust system.' },
+  blockMelted: { severity: 'high', title: 'Engine block thermal failure', cause: 'Extreme temperature damaged the engine block.', effect: 'The engine cannot operate safely.', action: 'Stop the engine and replace or rebuild the damaged assembly.' },
+  cylinderWallsMelted: { severity: 'high', title: 'Cylinder wall thermal failure', cause: 'Extreme temperature damaged the cylinder walls.', effect: 'The engine cannot operate safely.', action: 'Stop the engine and replace or rebuild the damaged assembly.' },
+  synchroWear: { title: 'Gear synchronizer wear observed', cause: 'BeamNG reported synchronizer stress during a gear change.', effect: 'Gear engagement may become difficult or noisy.', action: 'Use the clutch fully and avoid forcing gear engagement.' },
+}
+
 const { api, units } = useBridge()
 const events = useEvents()
 const tab = ref('live')
@@ -328,10 +417,13 @@ const liveOnline = computed(() => liveUpdatedAt.value > 0)
 const ignitionOn = computed(() => isNumber(live.value.ignition) && live.value.ignition >= 2)
 const scannerNeedsIgnition = computed(() => isWalking.value === false && liveOnline.value && !ignitionOn.value)
 const scannerConnected = computed(() => isWalking.value === false && liveOnline.value && ignitionOn.value)
-const connectionEyebrow = computed(() => scannerConnected.value ? 'CONNECTED VEHICLE' : scannerNeedsIgnition.value ? 'VEHICLE DETECTED' : 'VEHICLE SCANNER')
-const connectionStatus = computed(() => scannerConnected.value ? 'CONNECTED' : scannerNeedsIgnition.value ? 'TURN IGNITION ON' : isWalking.value ? 'ENTER VEHICLE' : 'WAITING')
-const connectionNoticeTitle = computed(() => scannerNeedsIgnition.value ? 'Scanner unavailable' : isWalking.value ? 'No vehicle connected' : 'Waiting for vehicle connection')
-const connectionNoticeText = computed(() => scannerNeedsIgnition.value ? 'Turn the ignition on to communicate with the vehicle control modules.' : isWalking.value ? 'Enter a vehicle to connect the scanner.' : 'Waiting for vehicle data.')
+const connectionPresentation = computed(() => scannerConnected.value
+  ? { eyebrow: 'CONNECTED VEHICLE', status: 'CONNECTED', noticeTitle: null, noticeText: null }
+  : scannerNeedsIgnition.value
+    ? { eyebrow: 'VEHICLE DETECTED', status: 'TURN IGNITION ON', noticeTitle: 'Scanner unavailable', noticeText: 'Turn the ignition on to communicate with the vehicle control modules.' }
+    : isWalking.value
+      ? { eyebrow: 'VEHICLE SCANNER', status: 'ENTER VEHICLE', noticeTitle: 'No vehicle connected', noticeText: 'Enter a vehicle to connect the scanner.' }
+      : { eyebrow: 'VEHICLE SCANNER', status: 'WAITING', noticeTitle: 'Waiting for vehicle connection', noticeText: 'Waiting for vehicle data.' })
 const maintenanceOnline = computed(() => live.value.maintenanceModeEnabled === true && Boolean(maintenance.value.categories))
 const maintenanceUnavailableText = computed(() => live.value.maintenanceModeEnabled === false
   ? 'RLS Maintenance Mode is disabled for this career save. Native vehicle diagnostics remain available.'
@@ -521,8 +613,7 @@ function lowIsBadState(value, reduced, low) {
   return 'Normal'
 }
 function serviceItemLabel(item) {
-  const labels = { coolantIntegrity: 'Coolant condition', fluidCondition: 'Fluid quality' }
-  return labels[item?.name] || item?.label || null
+  return SERVICE_ITEM_LABELS[item?.name] || item?.label || null
 }
 function dueMaintenanceItem(category) {
   return (category?.maintenanceItems || [])
@@ -541,8 +632,8 @@ function effectivePowerLimitReason(reason) {
 }
 function powerLimitAction(reason, cooling) {
   if (cooling) return maintenanceAction(radiator.value, 'Inspect coolant temperature, level, and the cooling system for faults.')
-  if (reason === 'Old engine top-end loss') return 'No routine service is due. Test engine output or compression; rebuild or replace the worn engine to restore performance.'
-  if (reason === 'Oil starvation') return 'Check the oil level and lubrication system before continued operation.'
+  const definition = POWER_LIMIT_DEFINITIONS[reason]
+  if (definition?.action) return definition.action
   if (reason === 'Severe ignition issue') return maintenanceAction(engine.value, 'Inspect and service the ignition system.')
   if (reason === 'Temporary symptom') return maintenanceAction(engine.value, 'Monitor for recurrence and inspect the engine if the condition becomes frequent.')
   return maintenanceAction(engine.value, 'Inspect the engine if the output restriction persists.')
@@ -556,12 +647,7 @@ function recentSymptom(category, categoryName) {
   return known.includes(type) && ageSeconds >= 0 && ageSeconds <= 300 ? type : null
 }
 function transmissionSymptomFinding(symptom, active) {
-  const labels = { roughShift: 'Rough shift', shiftDelay: 'Shift delay', slip: 'Transmission slip' }
-  const effects = {
-    roughShift: 'Gear changes may feel abrupt or harsh.',
-    shiftDelay: 'Gear engagement or shifting may respond more slowly than expected.',
-    slip: 'Engine speed may rise without a matching increase in vehicle speed.',
-  }
+  const definition = TRANSMISSION_SYMPTOM_DEFINITIONS[symptom]
   const dueItem = dueMaintenanceItem(transmission.value)
   const highMileage = (transmission.value.avgMiles || 0) >= 200000
   const cause = dueItem
@@ -574,21 +660,17 @@ function transmissionSymptomFinding(symptom, active) {
     severity: 'medium',
     attention: active,
     recent: !active,
-    title: `${active ? 'Active' : 'Intermittent'} ${labels[symptom] || 'transmission condition'}`,
+    title: `${active ? 'Active' : 'Intermittent'} ${definition?.label || 'transmission condition'}`,
     cause,
-    effect: effects[symptom] || 'Shift response or torque transfer may be affected.',
+    effect: definition?.effect || 'Shift response or torque transfer may be affected.',
     action: maintenanceAction(transmission.value, symptom === 'slip'
       ? 'Inspect the transmission and clutch if slipping returns.'
       : 'Monitor for recurrence and inspect the transmission if the condition becomes frequent.'),
   }
 }
-function buildDiagnosticFindings() {
-  const findings = []
-  const add = finding => {
-    if (!findings.some(existing => existing.key === finding.key)) findings.push(finding)
-  }
-
-  if (live.value.lowAirPressure === true) add({
+function buildPneumaticFindings() {
+  if (live.value.lowAirPressure !== true) return []
+  return [{
     key: 'low-air-pressure', severity: 'high', title: 'Low air pressure',
     cause: isNumber(live.value.airPressurePa)
       ? `The pneumatic system currently reports ${airPressure(live.value.airPressurePa)}.`
@@ -597,122 +679,139 @@ function buildDiagnosticFindings() {
       ? 'The spring parking brake is applied and may not release until pressure recovers.'
       : 'Air-brake and pneumatic-system operation may be limited until pressure recovers.',
     action: 'Allow the air compressor to build pressure. Inspect the compressor, tanks, and pneumatic system if pressure does not recover.',
+  }]
+}
+function buildElectricDriveFindings() {
+  const findings = []
+  if (live.value.motorBroken === true) findings.push({
+    key: 'motor-broken', severity: 'high', title: 'Drive motor fault detected',
+    cause: 'BeamNG reports that the installed drive motor is mechanically broken.',
+    effect: 'The motor cannot provide normal propulsion.',
+    action: 'Inspect and repair or replace the damaged drive motor.',
   })
-
-  if (live.value.isElectric) {
-    if (live.value.motorBroken === true) add({
-      key: 'motor-broken', severity: 'high', title: 'Drive motor fault detected',
-      cause: 'BeamNG reports that the installed drive motor is mechanically broken.',
-      effect: 'The motor cannot provide normal propulsion.',
-      action: 'Inspect and repair or replace the damaged drive motor.',
-    })
-    if (motorUnavailable.value) add({
-      key: 'motor-unavailable', severity: 'high', title: 'Drive motor unavailable',
-      cause: 'The motor is disabled even though connected battery energy remains available.',
-      effect: 'Propulsion from the affected motor is unavailable.',
-      action: 'Inspect the motor, its controller, and associated powertrain damage.',
-    })
-    if (motorOutputRestricted.value) add({
-      key: 'propulsion-restriction', severity: motorRestrictionNeedsAttention.value ? 'high' : 'medium',
-      attention: motorRestrictionNeedsAttention.value,
-      title: motorRestrictionNeedsAttention.value ? 'Propulsion output restricted' : 'Propulsion output reduced under load',
-      cause: hasMeasuredMotorRestriction.value
-        ? `The current motor torque limit is ${percent(motorTorqueAvailability.value)} of its installed rating.`
-        : 'The vehicle maintenance system has applied an output restriction.',
-      effect: 'Available propulsion torque or power is currently reduced.',
-      action: motorRestrictionNeedsAttention.value
-        ? 'Review motor operation and service condition; inspect the powertrain if the restriction persists.'
-        : 'No immediate action is required. Continue monitoring under-load availability for further reduction.',
-    })
-    if (!motorOutputRestricted.value && isNumber(recentMotorTorqueAvailability.value)) add({
-      key: 'recent-propulsion-restriction', severity: 'medium', attention: false, recent: true,
-      title: 'Recently observed — propulsion output reduced under load',
-      cause: `The lowest recently observed motor torque limit was ${percent(recentMotorTorqueAvailability.value)} of its installed rating.`,
-      effect: 'The reduction was present under load; current stationary output is no longer restricted.',
-      action: 'No immediate action is required. Continue monitoring if available output falls further.',
-    })
-    return findings.slice(0, 4)
-  }
-
+  if (motorUnavailable.value) findings.push({
+    key: 'motor-unavailable', severity: 'high', title: 'Drive motor unavailable',
+    cause: 'The motor is disabled even though connected battery energy remains available.',
+    effect: 'Propulsion from the affected motor is unavailable.',
+    action: 'Inspect the motor, its controller, and associated powertrain damage.',
+  })
+  if (motorOutputRestricted.value) findings.push({
+    key: 'propulsion-restriction', severity: motorRestrictionNeedsAttention.value ? 'high' : 'medium',
+    attention: motorRestrictionNeedsAttention.value,
+    title: motorRestrictionNeedsAttention.value ? 'Propulsion output restricted' : 'Propulsion output reduced under load',
+    cause: hasMeasuredMotorRestriction.value
+      ? `The current motor torque limit is ${percent(motorTorqueAvailability.value)} of its installed rating.`
+      : 'The vehicle maintenance system has applied an output restriction.',
+    effect: 'Available propulsion torque or power is currently reduced.',
+    action: motorRestrictionNeedsAttention.value
+      ? 'Review motor operation and service condition; inspect the powertrain if the restriction persists.'
+      : 'No immediate action is required. Continue monitoring under-load availability for further reduction.',
+  })
+  if (!motorOutputRestricted.value && isNumber(recentMotorTorqueAvailability.value)) findings.push({
+    key: 'recent-propulsion-restriction', severity: 'medium', attention: false, recent: true,
+    title: 'Recently observed — propulsion output reduced under load',
+    cause: `The lowest recently observed motor torque limit was ${percent(recentMotorTorqueAvailability.value)} of its installed rating.`,
+    effect: 'The reduction was present under load; current stationary output is no longer restricted.',
+    action: 'No immediate action is required. Continue monitoring if available output falls further.',
+  })
+  return findings
+}
+function buildNativeEngineDamageFindings() {
+  const findings = []
   const recentDamageEvents = Array.isArray(live.value.recentDamageEvents)
     ? live.value.recentDamageEvents
     : Object.values(live.value.recentDamageEvents || {})
   for (const event of recentDamageEvents) {
     const finding = nativeDamageFinding(event)
-    if (finding) add(finding)
+    if (finding) findings.push(finding)
   }
-
-  if (live.value.engineHydrolocked) add({
+  if (live.value.engineHydrolocked) findings.push({
     key: 'hydrolock', severity: 'high', title: 'Engine rotation obstructed',
     cause: 'Liquid intrusion into a combustion chamber is the likely cause.', effect: 'The engine cannot rotate safely.',
     action: 'Stop attempting to start the engine and inspect it before further operation.',
   })
-  if (live.value.rodBearingsDamaged) add({
+  if (live.value.rodBearingsDamaged) findings.push({
     key: 'rod-bearings', severity: 'high', title: 'Severe internal engine damage',
     cause: 'Bearing or lubrication-system damage is the likely cause.', effect: 'Continued operation may cause complete engine failure.',
     action: 'Stop the engine and repair the damaged long block.',
   })
-  if (live.value.headGasketDamaged) add({
+  if (live.value.headGasketDamaged) findings.push({
     key: 'head-gasket', severity: 'high', title: 'Combustion/cooling sealing fault',
     cause: 'Cylinder-head or head-gasket sealing failure is the likely cause.', effect: 'Cooling and combustion performance may be compromised.',
     action: 'Inspect and repair the cylinder head and gasket.',
   })
-  if (pistonRingsDamaged.value) add({
+  if (pistonRingsDamaged.value) findings.push({
     key: 'piston-rings', severity: 'high', title: 'Cylinder sealing fault suspected',
     cause: 'Piston-ring or cylinder sealing deterioration is the likely cause.', effect: 'Oil consumption and power loss may increase.',
     action: 'Inspect compression and repair the engine internals.',
   })
+  return findings
+}
+function buildMaintenanceFindings() {
+  const findings = []
   if (powerLimited.value) {
     const cooling = radiator.value.liveMetrics?.powerLimitActive === true
     const reason = powerLimitReason.value
     const ageRelated = reason === 'Old engine top-end loss'
-    add({
+    findings.push({
       key: 'output-restriction', severity: cooling ? 'high' : 'medium', attention: !ageRelated,
       title: ageRelated ? 'Age-related performance loss' : 'Engine output restricted',
       cause: friendlyFindingCause(reason), effect: 'Available engine torque or power is currently reduced.',
       action: powerLimitAction(reason, cooling),
     })
   }
-  if (!powerLimited.value && engine.value.activeSymptom) add({
+  if (!powerLimited.value && engine.value.activeSymptom) findings.push({
     key: 'engine-symptom', severity: 'medium', title: engine.value.activeSymptomLabel || 'Active engine condition',
     cause: 'An intermittent engine fault is currently active.', effect: 'Engine response or combustion quality may be affected.',
     action: maintenanceAction(engine.value, 'Inspect the engine and its service condition.'),
   })
-  if (radiator.value.activeSymptom && !powerLimited.value) add({
+  if (radiator.value.activeSymptom && !powerLimited.value) findings.push({
     key: 'cooling-symptom', severity: 'medium', title: radiator.value.activeSymptomLabel || 'Active cooling-system condition',
     cause: 'The cooling system has detected an abnormal operating condition.', effect: 'Cooling performance may be reduced.',
     action: maintenanceAction(radiator.value, 'Inspect the cooling system.'),
   })
-  if (live.value.clutchDamaged) add({
+  return findings
+}
+function buildDrivetrainFindings() {
+  const findings = []
+  if (live.value.clutchDamaged) findings.push({
     key: 'clutch-damage', severity: 'high', title: 'Clutch damage detected',
     cause: 'The clutch can no longer transfer torque normally.', effect: 'Slip or loss of drive may occur.',
     action: 'Inspect and replace the clutch assembly.',
   })
-  if (clutchTemperatureHigh.value || clutchTemperatureElevated.value) add({
+  if (clutchTemperatureHigh.value || clutchTemperatureElevated.value) findings.push({
     key: 'clutch-temperature', severity: clutchTemperatureHigh.value ? 'high' : 'medium', title: clutchTemperatureHigh.value ? 'Clutch overheating' : 'Clutch temperature high',
     cause: 'Excessive clutch slip has generated more heat than the clutch can safely dissipate.',
     effect: clutchTemperatureHigh.value ? 'Continued use may permanently damage the clutch.' : 'Clutch capacity may fall if temperature continues to rise.',
     action: 'Stop slipping the clutch and allow it to cool. Inspect the clutch if overheating returns frequently.',
   })
   const activeTransmissionSymptom = transmission.value.activeSymptom
-  if (activeTransmissionSymptom) add(transmissionSymptomFinding(activeTransmissionSymptom, true))
+  if (activeTransmissionSymptom) findings.push(transmissionSymptomFinding(activeTransmissionSymptom, true))
   else {
     const storedTransmissionSymptom = recentSymptom(transmission.value, 'transmission')
     if (['roughShift', 'shiftDelay', 'slip'].includes(storedTransmissionSymptom)) {
-      add(transmissionSymptomFinding(storedTransmissionSymptom, false))
+      findings.push(transmissionSymptomFinding(storedTransmissionSymptom, false))
     }
   }
   const recentClutchHeatPeak = live.value.recentClutchHeatPeakC ?? recentSymptoms.value.clutchHeat?.peakTemp
   const clutchHeatAge = Date.now() / 1000 - Number(recentSymptoms.value.clutchHeat?.observedAt || 0)
   const hasRecentClutchHeat = isNumber(live.value.recentClutchHeatPeakC)
     || (isNumber(recentClutchHeatPeak) && clutchHeatAge >= 0 && clutchHeatAge <= 300)
-  if (!clutchTemperatureHigh.value && !clutchTemperatureElevated.value && hasRecentClutchHeat) add({
+  if (!clutchTemperatureHigh.value && !clutchTemperatureElevated.value && hasRecentClutchHeat) findings.push({
     key: 'recent-clutch-temperature', severity: 'medium', attention: false, recent: true, title: 'Recent clutch overheating',
     cause: 'Excessive clutch slip raised temperature above the installed clutch warning threshold.',
     effect: `Clutch temperature recently reached ${temperature(recentClutchHeatPeak)} and has since fallen.`,
     action: 'Allow the clutch to cool fully and inspect it if overheating returns frequently.',
   })
-  if (live.value.checkEngine === true && !findings.some(finding => finding.attention !== false)) add({
+  return findings
+}
+function buildDiagnosticFindings() {
+  const sources = live.value.isElectric
+    ? [buildPneumaticFindings(), buildElectricDriveFindings()]
+    : [buildPneumaticFindings(), buildNativeEngineDamageFindings(), buildMaintenanceFindings(), buildDrivetrainFindings()]
+  const findings = sources.flat().filter((finding, index, all) =>
+    all.findIndex(candidate => candidate.key === finding.key) === index)
+  if (!live.value.isElectric && live.value.checkEngine === true && !findings.some(finding => finding.attention !== false)) findings.push({
     key: 'controller-warning', severity: 'medium', title: 'Powertrain warning active',
     cause: 'The vehicle controller has requested a warning, but no more specific supported cause is currently reported.',
     effect: 'A dashboard powertrain warning is active.',
@@ -721,53 +820,20 @@ function buildDiagnosticFindings() {
   return findings.slice(0, 4)
 }
 function nativeDamageFinding(event) {
-  const definitions = {
-    overRevDanger: ['Engine over-rev observed', 'Engine speed exceeded the mechanical safe limit.', 'Internal engine components may have been overstressed.', 'Avoid further over-revving and inspect the engine if abnormal operation follows.'],
-    mildOverrevDamage: ['Engine over-rev damage', 'BeamNG reported damage caused by excessive engine speed.', 'Engine durability or performance may be reduced.', 'Inspect the engine before further high-speed operation.'],
-    catastrophicOverrevDamage: ['Severe engine over-rev damage', 'Engine speed caused catastrophic internal stress.', 'Major internal engine damage may have occurred.', 'Stop the engine and inspect it before further operation.'],
-    overTorqueDanger: ['Engine overtorque observed', 'Combustion torque exceeded the engine damage threshold.', 'Internal engine components may have been overstressed.', 'Reduce load and inspect the engine if abnormal operation follows.'],
-    catastrophicOverTorqueDamage: ['Severe engine overtorque damage', 'BeamNG reported catastrophic damage from excessive torque.', 'Major internal engine damage may have occurred.', 'Stop the engine and inspect it before further operation.'],
-    coolantOverheating: ['Coolant overheating', 'Coolant temperature exceeded the vehicle warning threshold.', 'Continued operation may damage the cooling system or engine.', 'Reduce load, stop safely, and allow the engine to cool.'],
-    oilOverheating: ['Engine oil overheating', 'Oil temperature exceeded the vehicle warning threshold.', 'Lubrication performance may be reduced.', 'Reduce load and allow the engine oil to cool.'],
-    starvedOfOil: ['Oil starvation observed', 'BeamNG reported insufficient oil supply under the current vehicle motion.', 'Engine bearings may have received inadequate lubrication.', 'Stop severe manoeuvres and inspect oil level if the warning returns.'],
-    oilLevelCritical: ['Critical engine oil level', 'The engine reported an unsafe oil quantity.', 'Lubrication loss may cause rapid engine damage.', 'Stop the engine and correct the oil level before continued operation.'],
-    oilLevelTooHigh: ['Engine oil level too high', 'The engine reported excessive oil quantity.', 'Lubrication and crankcase operation may be affected.', 'Correct the oil level before continued operation.'],
-    engineIsHydrolocking: ['Hydrolock risk observed', 'Liquid intrusion obstructed engine rotation.', 'Further starting attempts may cause severe internal damage.', 'Stop attempting to start the engine and inspect it.'],
-    engineReducedTorque: ['Engine output reduced', 'The vehicle controller reported reduced engine torque.', 'Available engine performance was limited.', 'Review other findings and inspect the engine if the restriction returns.'],
-    engineDisabled: ['Engine disabled', 'The vehicle reported that the engine could not operate.', 'Propulsion from the engine was unavailable.', 'Inspect active damage and engine systems before restarting.'],
-    engineLockedUp: ['Engine lock-up', 'BeamNG reported that the engine could not rotate.', 'The engine cannot operate normally.', 'Stop attempting to run the engine and inspect internal damage.'],
-    impactDamage: ['Engine impact damage', 'An impact damaged the engine assembly.', 'Engine operation or durability may be compromised.', 'Inspect the engine and its mounts before continued operation.'],
-    radiatorLeak: ['Radiator leak', 'BeamNG reported cooling-system leakage from the radiator.', 'Coolant loss may lead to overheating.', 'Inspect the radiator and coolant level before continued operation.'],
-    oilRadiatorLeak: ['Engine oil cooler leak', 'BeamNG reported oil leakage from the oil cooler.', 'Oil loss may reduce lubrication.', 'Inspect the oil cooler and oil level before continued operation.'],
-    oilpanLeak: ['Engine oil pan leak', 'BeamNG reported oil leakage from the oil pan.', 'Oil loss may reduce lubrication.', 'Inspect the oil pan and oil level before continued operation.'],
-    exhaustBroken: ['Exhaust system damage', 'BeamNG reported a broken exhaust connection.', 'Exhaust flow, sound, or emissions behavior may be affected.', 'Inspect and repair the exhaust system.'],
-    blockMelted: ['Engine block thermal failure', 'Extreme temperature damaged the engine block.', 'The engine cannot operate safely.', 'Stop the engine and replace or rebuild the damaged assembly.'],
-    cylinderWallsMelted: ['Cylinder wall thermal failure', 'Extreme temperature damaged the cylinder walls.', 'The engine cannot operate safely.', 'Stop the engine and replace or rebuild the damaged assembly.'],
-    synchroWear: ['Gear synchronizer wear observed', 'BeamNG reported synchronizer stress during a gear change.', 'Gear engagement may become difficult or noisy.', 'Use the clutch fully and avoid forcing gear engagement.'],
-  }
-  const definition = definitions[event?.name]
+  const definition = NATIVE_DAMAGE_DEFINITIONS[event?.name]
   if (!definition) return null
   const active = event.active === true
   return {
     key: `native-${event.group}-${event.name}`,
-    severity: ['catastrophicOverrevDamage', 'catastrophicOverTorqueDamage', 'engineLockedUp', 'blockMelted', 'cylinderWallsMelted', 'oilLevelCritical'].includes(event.name) ? 'high' : 'medium',
+    severity: definition.severity || 'medium',
     attention: active,
     recent: !active,
-    title: `${active ? 'Active — ' : 'Recently observed — '}${definition[0]}`,
-    cause: definition[1], effect: definition[2], action: definition[3],
+    title: `${active ? 'Active — ' : 'Recently observed — '}${definition.title}`,
+    cause: definition.cause, effect: definition.effect, action: definition.action,
   }
 }
 function friendlyFindingCause(reason) {
-  const labels = {
-    'Temporary symptom': 'An active engine fault is limiting output.',
-    'Oil starvation': 'Insufficient lubrication is limiting engine output.',
-    'Severe ignition issue': 'Ignition-system condition is limiting engine output.',
-    'Old engine top-end loss': 'Internal engine wear is reducing available output.',
-    'Maintenance torque protection': 'Engine service condition has triggered protective output reduction.',
-    'Catastrophic cooling loss': 'Severe coolant loss has triggered engine protection.',
-    Overheating: 'Excessive engine temperature has triggered engine protection.',
-  }
-  return labels[reason] || 'The powertrain has applied a protective output reduction.'
+  return POWER_LIMIT_DEFINITIONS[reason]?.cause || 'The powertrain has applied a protective output reduction.'
 }
 function friendlyTransmissionType(value) {
   if (!value) return null
@@ -779,38 +845,10 @@ function friendlyTransmissionType(value) {
   return null
 }
 function friendlyLimitReason(reason) {
-  const labels = {
-    'Temporary symptom': 'Reduced — active engine fault',
-    'Oil starvation': 'Reduced — lubrication fault',
-    'Severe ignition issue': 'Reduced — ignition fault',
-    'Old engine top-end loss': 'Reduced — engine wear',
-    'Maintenance torque protection': 'Reduced — service condition',
-  }
-  return labels[reason] || (reason ? `Reduced — ${reason}` : 'Reduced')
+  return POWER_LIMIT_DEFINITIONS[reason]?.status || (reason ? `Reduced — ${reason}` : 'Reduced')
 }
 function diagnosticRiskLabel(risk) {
-  const labels = {
-    wear_spike: 'Accelerated wear detected',
-    high_output: 'Powertrain load is increasing wear',
-    limit_stress: 'Transmission load is high',
-    failure_window: 'Transmission failure risk detected',
-    engine_integrity: 'Engine mechanical integrity is low',
-    oil_starvation: 'Severe oil starvation detected',
-    oil_starvation_catastrophic: 'Critical oil starvation detected',
-    piston_rings: 'Piston-ring damage detected',
-    cooling_catastrophic: 'Critical cooling-system loss detected',
-    cooling_severe: 'Severe cooling-system loss detected',
-    overheating: 'Engine is overheating',
-    critical_heat: 'Coolant temperature is critically high',
-    transmission_overheat: 'Transmission is overheating',
-    transmission_heat: 'Transmission temperature is elevated',
-    fluid_quality_critical: 'Transmission-fluid condition is critical',
-    fluid_quality_low: 'Transmission-fluid condition is poor',
-    slip_risk: 'Transmission slip risk detected',
-    fluid_loss: 'Transmission-fluid level is critical',
-    fluid_low: 'Transmission-fluid level is low',
-  }
-  if (labels[risk?.key]) return labels[risk.key]
+  if (DIAGNOSTIC_RISK_DEFINITIONS[risk?.key]) return DIAGNOSTIC_RISK_DEFINITIONS[risk.key].label
   if (/_due$/.test(risk?.key || '')) return 'Service overdue'
   return null
 }
@@ -820,10 +858,8 @@ function diagnosticRisks(risks) {
 }
 function diagnosticRiskDetail(risk) {
   if (!risk) return null
-  if (risk.key === 'wear_spike') return 'Wear rate is currently above normal.'
-  if (risk.key === 'limit_stress') return 'Operating demand is close to the transmission capacity.'
-  if (risk.key === 'failure_window') return 'Continued operation may cause a mechanical failure.'
-  if (risk.key === 'piston_rings') return 'Oil consumption is elevated.'
+  const definition = DIAGNOSTIC_RISK_DEFINITIONS[risk.key]
+  if (definition?.detail) return definition.detail
   const detail = risk.detail
   if (!detail) return null
   if (/drive multiplier|limit stress|per sec/i.test(detail)) return null
