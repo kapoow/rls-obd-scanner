@@ -30,13 +30,13 @@
             <div class="bar"><i :style="{ width: engineRpmPercent + '%' }"></i></div>
           </article>
           <article v-if="!live.isElectric && isNumber(live.coolantTemp)" class="gauge">
-            <span>{{ live.isHybrid ? 'Generator coolant' : 'Coolant temperature' }}</span><strong>{{ temperature(live.coolantTemp) }}</strong><small>°C</small>
+            <span>{{ live.isHybrid ? 'Generator coolant' : 'Coolant temperature' }}</span><strong>{{ temperature(live.coolantTemp) }}</strong>
             <div class="bar"><i :class="{ hot: live.coolantTemp >= 115 }" :style="{ width: temperaturePercent + '%' }"></i></div>
           </article>
         </section>
 
         <section class="card grid">
-          <Metric v-if="!live.isElectric" :label="live.isHybrid ? 'Generator oil' : 'Oil'" :value="temperature(live.oilTemp)" unit="°C" :warn="live.oilTemp >= 135" />
+          <Metric v-if="!live.isElectric" :label="live.isHybrid ? 'Generator oil' : 'Oil'" :value="temperature(live.oilTemp)" :warn="live.oilTemp >= 135" />
           <Metric v-if="live.hasElectricDrive" label="Battery charge" :value="percent(live.batteryCharge)" />
           <Metric v-if="!live.isElectric" :label="live.isHybrid ? 'Diesel fuel' : 'Fuel level'" :value="percent(live.fuel)" />
           <Metric :label="live.hasElectricDrive ? 'Vehicle state' : 'Ignition'" :value="ignitionText" />
@@ -62,7 +62,7 @@
           <h2>{{ live.isHybrid ? 'Generator engine specifications' : 'Engine specifications' }}</h2>
           <div class="spec-list">
             <div v-if="live.engineName"><span>{{ live.isHybrid ? 'Generator engine' : 'Engine' }}</span><strong>{{ live.engineName }}</strong></div>
-            <div v-if="isNumber(ratedPowerHp)"><span>Peak power</span><strong>{{ whole(ratedPowerHp) }} hk</strong></div>
+            <div v-if="isNumber(ratedPowerHp)"><span>Peak power</span><strong>{{ power(ratedPowerHp) }}</strong></div>
             <div v-if="isNumber(ratedTorque)"><span>Peak torque</span><strong>{{ torque(ratedTorque) }}</strong></div>
             <div v-if="live.forcedInductionName || live.forcedInductionType"><span>Forced induction</span><strong>{{ live.forcedInductionName || live.forcedInductionType }}</strong></div>
           </div>
@@ -73,7 +73,7 @@
           <div class="spec-list">
             <template v-for="motor in motors" :key="motor.id">
               <div><span>{{ motor.position ? `${motor.position} motor` : 'Motor' }}</span><strong>{{ motor.name }}</strong></div>
-              <div v-if="isNumber(motor.ratedPowerKw)"><span>Peak power</span><strong>{{ whole(motor.ratedPowerKw) }} kW</strong></div>
+              <div v-if="isNumber(motor.ratedPowerHp)"><span>Peak power</span><strong>{{ power(motor.ratedPowerHp) }}</strong></div>
               <div v-if="isNumber(motor.ratedTorqueNm)"><span>Peak torque</span><strong>{{ torque(motor.ratedTorqueNm) }}</strong></div>
               <div v-if="isNumber(motor.maxRpm)"><span>Maximum motor speed</span><strong>{{ whole(motor.maxRpm) }} rpm</strong></div>
             </template>
@@ -145,7 +145,7 @@
             <div v-if="isNumber(category.data.avgMiles)" class="mileage-wear">
               <div><span>Mileage wear</span><b :style="{ color: mileageWearColor(category.data.avgMiles) }">{{ mileageWearPercent(category.data.avgMiles) }}%</b></div>
               <div class="service-bar"><i :style="{ width: mileageWearPercent(category.data.avgMiles) + '%', backgroundColor: mileageWearColor(category.data.avgMiles) }"></i></div>
-              <small>{{ whole(category.data.avgMiles) }} mi on installed components</small>
+              <small>{{ distanceMiles(category.data.avgMiles) }} on installed components</small>
             </div>
             <div class="service-heading">Service condition remaining</div>
             <div v-if="isNumber(category.data.integrityValue) && category.data.integrityValue < 0.999" class="service-item">
@@ -195,7 +195,7 @@
         <section v-if="!live.hasElectricDrive" class="card grid">
           <Metric label="Shift response" :value="shiftQualityState" :warn="shiftQualityState !== 'Normal'" />
           <Metric v-if="hasClutchData" label="Estimated clutch condition" :value="clutchWearState" :warn="clutchWearState !== 'Normal'" />
-          <Metric v-if="hasClutchData && isNumber(live.clutchTempC)" label="Clutch temperature" :value="`${whole(live.clutchTempC)} °C`" :warn="clutchTemperatureHigh" :caution="clutchTemperatureElevated" />
+          <Metric v-if="hasClutchData && isNumber(live.clutchTempC)" label="Clutch temperature" :value="temperature(live.clutchTempC)" :warn="clutchTemperatureHigh" :caution="clutchTemperatureElevated" />
           <Metric label="Fluid quality" :value="percent(transmission.maintenance?.fluidCondition)" />
           <Metric label="Fluid level" :value="percent(transmission.maintenance?.fluidLevel)" />
         </section>
@@ -255,7 +255,7 @@ const DifferentialBlock = props => {
 }
 DifferentialBlock.props = ['label', 'data', 'hideFinalDrive']
 
-const { api } = useBridge()
+const { api, units } = useBridge()
 const events = useEvents()
 const tab = ref('live')
 const live = ref({})
@@ -359,7 +359,7 @@ const nextServiceMiles = computed(() => {
     .filter(value => isNumber(value))
   return due.length ? Math.max(0, Math.min(...due)) : null
 })
-const nextServiceText = computed(() => isNumber(nextServiceMiles.value) ? `${whole(nextServiceMiles.value)} mi` : null)
+const nextServiceText = computed(() => distanceMiles(nextServiceMiles.value))
 const motorTorqueAvailability = computed(() => isNumber(live.value.motorRestrictionRatedTorqueNm) && live.value.motorRestrictionRatedTorqueNm > 0 && isNumber(live.value.motorTorqueLimitNm)
   ? Math.min(1, Math.max(0, live.value.motorTorqueLimitNm / live.value.motorRestrictionRatedTorqueNm))
   : null)
@@ -445,13 +445,15 @@ function isNumber(value) { return typeof value === 'number' && Number.isFinite(v
 function isBoolean(value) { return typeof value === 'boolean' }
 function decimal(value, digits = 1) { return isNumber(value) ? value.toFixed(digits) : null }
 function whole(value) { return isNumber(value) ? Math.round(value).toLocaleString() : null }
-function temperature(value) { return isNumber(value) ? Math.round(value) : null }
+function temperature(value) { return isNumber(value) ? units.buildString('temperature', value, 0) : null }
 function percent(value) { return isNumber(value) ? `${Math.round(value * 100)}%` : null }
 function clampPercent(value) { return typeof value === 'number' ? Math.max(0, Math.min(100, value * 100)) : 0 }
-function torque(value) { return isNumber(value) ? `${Math.round(value)} Nm` : null }
+function power(metricHorsepower) { return isNumber(metricHorsepower) ? units.buildString('power', metricHorsepower, 0) : null }
+function torque(value) { return isNumber(value) ? units.buildString('torque', value, 0) : null }
+function distanceMiles(miles) { return isNumber(miles) ? units.buildString('length', miles * 1609.344, 0) : null }
 function ratioList(ratios) { return ratios.filter(isNumber).map(ratio => `${decimal(ratio, 2)}:1`).join(' / ') }
-function airPressure(pascals) { return isNumber(pascals) ? `${decimal(pascals / 100000, 1)} bar / ${whole(pascals / 6894.757)} psi` : null }
-function boostPressure(psi) { return isNumber(psi) ? `${decimal(psi * 0.0689476, 2)} bar / ${decimal(psi, 1)} psi` : null }
+function airPressure(pascals) { return isNumber(pascals) ? units.buildString('pressure', pascals / 1000, 1) : null }
+function boostPressure(psi) { return isNumber(psi) ? units.buildString('pressure', psi * 6.894757, 1) : null }
 function serviceConditionSeverity(item) {
   if (!isNumber(item?.value) || !isNumber(item?.targetValue) || item.targetValue <= 0) return null
   if (item.value < item.targetValue - 0.12) return 'bad'
@@ -700,7 +702,7 @@ function buildDiagnosticFindings() {
   if (!clutchTemperatureHigh.value && !clutchTemperatureElevated.value && hasRecentClutchHeat) add({
     key: 'recent-clutch-temperature', severity: 'medium', attention: false, recent: true, title: 'Recent clutch overheating',
     cause: 'Excessive clutch slip raised temperature above the installed clutch warning threshold.',
-    effect: `Clutch temperature recently reached ${whole(recentClutchHeatPeak)} °C and has since fallen.`,
+    effect: `Clutch temperature recently reached ${temperature(recentClutchHeatPeak)} and has since fallen.`,
     action: 'Allow the clutch to cool fully and inspect it if overheating returns frequently.',
   })
   if (live.value.checkEngine === true && !findings.some(finding => finding.attention !== false)) add({
@@ -818,12 +820,12 @@ function diagnosticRiskDetail(risk) {
   const detail = risk.detail
   if (!detail) return null
   if (/drive multiplier|limit stress|per sec/i.test(detail)) return null
-  return detail.replace(/([0-9.]+) C simulated/i, 'Estimated temperature $1 °C')
+  return detail.replace(/([0-9.]+) C simulated/i, (_, value) => `Estimated temperature ${temperature(Number(value))}`)
 }
 function dueText(item) {
   const due = item.dueMiles ?? item.serviceDueMilesRemaining
   if (typeof due !== 'number') return null
-  return due <= 0 ? 'Service due now' : `Estimated service due in ${Math.round(due).toLocaleString()} mi`
+  return due <= 0 ? 'Service due now' : `Estimated service due in ${distanceMiles(due)}`
 }
 </script>
 

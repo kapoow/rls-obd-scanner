@@ -39,9 +39,6 @@ BeamNG's standard vehicle apps outside career mode.
   next update. Native vehicle readings may still be available, but service
   condition information is not currently reliable while maintenance mode is
   disabled.
-- Display units are currently hard-coded and do not yet follow the player's
-  BeamNG unit settings. Dynamic distance, temperature, pressure, power, and
-  torque formatting is also planned for the next update.
 
 ## Installation
 
