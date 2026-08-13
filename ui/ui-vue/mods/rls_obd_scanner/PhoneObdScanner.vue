@@ -174,7 +174,7 @@
               <div><span>{{ motor.position || 'Drive motor' }}</span><strong>{{ motor.name }}</strong></div>
               <div v-if="motor.reductionName"><span>Reduction unit</span><strong>{{ motor.reductionName }}</strong></div>
               <div v-if="motor.reductionRatios?.length"><span>Reduction ratios</span><strong>{{ ratioList(motor.reductionRatios) }}</strong></div>
-              <div v-else-if="isNumber(motor.reductionRatio)"><span>Current reduction</span><strong>{{ decimal(motor.reductionRatio, 2) }}:1</strong></div>
+              <div v-else-if="isNumber(motor.reductionRatio)"><span>{{ motor.reductionType === 'torsionReactor' ? 'Reduction ratio' : 'Current reduction' }}</span><strong>{{ decimal(motor.reductionRatio, 2) }}:1</strong></div>
               <div v-if="motor.differentialName"><span>Differential</span><strong>{{ motor.differentialName }}</strong></div>
               <div v-if="isNumber(motor.finalDriveRatio)"><span>Final drive</span><strong>{{ decimal(motor.finalDriveRatio, 2) }}:1</strong></div>
             </template>

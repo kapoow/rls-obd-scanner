@@ -348,7 +348,11 @@ end
 local function electricMotorData(device)
   local ratedPowerHp = powerHp(firstNumber(device.maxPower, device.torqueData and device.torqueData.maxPower))
   local rearIndex = tostring(device and device.name or ""):match("(%d+)$")
+  -- EV reductions are not represented by one universal device type. RLS
+  -- series hybrids use range boxes, while some native EVs use a fixed-ratio
+  -- torsion reactor. Prefer the selectable range box when both exist.
   local reduction = findDescendantByType(device, "rangeBox")
+    or findDescendantByType(device, "torsionReactor")
   local differential = findDescendantByType(device, "differential")
   local reductionName, differentialName = nil, nil
   if rearIndex then
@@ -361,6 +365,7 @@ local function electricMotorData(device)
     if number(ratio) then reductionRatios[#reductionRatios + 1] = number(ratio) end
   end
   table.sort(reductionRatios, function(a, b) return a > b end)
+  local differentialRatio = differential and number(differential.gearRatio) or nil
   return {
     id = tostring(device.name or "electricMotor"),
     position = electricMotorPosition(device),
@@ -374,9 +379,13 @@ local function electricMotorData(device)
     reductionName = reductionName,
     reductionRatios = reductionRatios,
     reductionRatio = reduction and number(reduction.gearRatio) or nil,
+    reductionType = reduction and reduction.type or nil,
     reductionMode = reduction and reduction.mode or nil,
     differentialName = differentialName,
-    finalDriveRatio = differential and number(differential.gearRatio) or nil,
+    -- A unity differential follows the real upstream reduction on several EVs
+    -- and is not useful as a separately labelled final drive.
+    finalDriveRatio = differentialRatio and math.abs(differentialRatio - 1) > 0.0001
+      and differentialRatio or nil,
     broken = reportedBoolean(device, "isBroken"),
     disabled = reportedBoolean(device, "isDisabled"),
     hasEnergy = reportedBoolean(device, "hasEnergy"),
