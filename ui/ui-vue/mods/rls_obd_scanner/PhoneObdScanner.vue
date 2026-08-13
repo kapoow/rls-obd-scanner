@@ -134,7 +134,7 @@
           These service values are applied to this vehicle by RLS and can affect propulsion output, but they are not native EV component readings.
         </Notice>
         <Notice v-if="!maintenanceOnline" title="Service information unavailable">
-          Service information is still initializing or is not available for this vehicle.
+          {{ maintenanceUnavailableText }}
         </Notice>
         <template v-if="maintenanceOnline">
           <section v-for="category in maintenanceCategories" :key="category.key" class="card service-card">
@@ -276,6 +276,10 @@ const tabs = [
 useStreams(['rlsObdScannerData', 'vehicleMaintenanceDebugData'], streams => {
   if (streams.rlsObdScannerData) {
     live.value = streams.rlsObdScannerData
+    if (streams.rlsObdScannerData.maintenanceModeEnabled !== true) {
+      maintenance.value = {}
+      recentSymptoms.value = {}
+    }
     const clutchTemp = streams.rlsObdScannerData.clutchTempC
     const warningTemp = streams.rlsObdScannerData.clutchWarningTempC
     if (isNumber(clutchTemp) && isNumber(warningTemp) && clutchTemp >= warningTemp) {
@@ -286,7 +290,7 @@ useStreams(['rlsObdScannerData', 'vehicleMaintenanceDebugData'], streams => {
     }
     liveUpdatedAt.value = Date.now()
   }
-  if (streams.vehicleMaintenanceDebugData) {
+  if (streams.vehicleMaintenanceDebugData && live.value.maintenanceModeEnabled === true) {
     const incoming = streams.vehicleMaintenanceDebugData
     const observed = { ...recentSymptoms.value }
     for (const categoryName of ['engine', 'radiator', 'transmission']) {
@@ -328,7 +332,10 @@ const connectionEyebrow = computed(() => scannerConnected.value ? 'CONNECTED VEH
 const connectionStatus = computed(() => scannerConnected.value ? 'CONNECTED' : scannerNeedsIgnition.value ? 'TURN IGNITION ON' : isWalking.value ? 'ENTER VEHICLE' : 'WAITING')
 const connectionNoticeTitle = computed(() => scannerNeedsIgnition.value ? 'Scanner unavailable' : isWalking.value ? 'No vehicle connected' : 'Waiting for vehicle connection')
 const connectionNoticeText = computed(() => scannerNeedsIgnition.value ? 'Turn the ignition on to communicate with the vehicle control modules.' : isWalking.value ? 'Enter a vehicle to connect the scanner.' : 'Waiting for vehicle data.')
-const maintenanceOnline = computed(() => Boolean(maintenance.value.categories))
+const maintenanceOnline = computed(() => live.value.maintenanceModeEnabled === true && Boolean(maintenance.value.categories))
+const maintenanceUnavailableText = computed(() => live.value.maintenanceModeEnabled === false
+  ? 'RLS Maintenance Mode is disabled for this career save. Native vehicle diagnostics remain available.'
+  : 'Service information is still initializing or is not available for this vehicle.')
 const vehicleTitle = computed(() => isWalking.value ? 'No vehicle connected' : displayVehicleName.value || live.value.vehicleName || (liveOnline.value ? `Vehicle ${live.value.vehicleId}` : 'No connection'))
 const ignitionText = computed(() => live.value.isHybrid
   ? (live.value.ignition == null ? null : live.value.ignition >= 2

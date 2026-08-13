@@ -13,6 +13,14 @@ local function careerActive()
   return career_career and career_career.isActive and career_career.isActive() == true
 end
 
+local function maintenanceModeEnabled()
+  if not careerActive() or not career_modules_maintenanceMode
+      or type(career_modules_maintenanceMode.isEnabled) ~= "function" then
+    return nil
+  end
+  return career_modules_maintenanceMode.isEnabled() == true
+end
+
 local function scannerInstalled()
   if not extensions.isExtensionLoaded("ui_phone_layout") then
     extensions.load("ui_phone_layout")
@@ -26,10 +34,18 @@ local function ensureVehicleMonitor()
   local vehicle = be:getPlayerVehicle(0)
   if not vehicle then return end
   if scannerInstalled() then
-    vehicle:queueLuaCommand("if not extensions.isExtensionLoaded('rlsObdScanner') then extensions.load('rlsObdScanner') end")
+    local enabled = maintenanceModeEnabled()
+    local serializedEnabled = enabled == nil and "nil" or tostring(enabled)
+    vehicle:queueLuaCommand("if not extensions.isExtensionLoaded('rlsObdScanner') then extensions.load('rlsObdScanner') end; "
+      .. "if rlsObdScanner and rlsObdScanner.setMaintenanceModeEnabled then rlsObdScanner.setMaintenanceModeEnabled("
+      .. serializedEnabled .. ") end")
   else
     vehicle:queueLuaCommand("if extensions.isExtensionLoaded('rlsObdScanner') then extensions.unload('rlsObdScanner') end")
   end
+end
+
+local function onExperimentalMaintenanceModeChanged()
+  ensureVehicleMonitor()
 end
 
 local function register()
@@ -82,5 +98,6 @@ M.onExtensionLoaded = onExtensionLoaded
 M.onExtensionUnloaded = unregister
 M.onUpdate = onUpdate
 M.onVehicleSwitched = onVehicleSwitched
+M.onExperimentalMaintenanceModeChanged = onExperimentalMaintenanceModeChanged
 M.register = register
 return M

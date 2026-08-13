@@ -454,7 +454,10 @@ local function maintenanceManagerLoaded()
   return type(maintenanceManager) == "table"
 end
 
+local maintenanceModeEnabled = nil
+
 local function maintenanceNeedsAttention()
+  if maintenanceModeEnabled ~= true then return false end
   if not maintenanceManagerLoaded() then return false end
   local manager = extensions and extensions.maintenanceManager or maintenanceManager
   if type(manager) ~= "table" or type(manager.getSnapshot) ~= "function" then return false end
@@ -573,6 +576,7 @@ local function buildState()
   end
   return {
     vehicleId = obj:getId(),
+    maintenanceModeEnabled = maintenanceModeEnabled,
     vehicleName = v and v.config and (v.config.name or v.config.model) or nil,
     isElectric = isElectric,
     isHybrid = isHybrid,
@@ -684,6 +688,15 @@ local function requestState()
   if gui then gui.send("rlsObdScannerData", buildState()) end
 end
 
+local function setMaintenanceModeEnabled(enabled)
+  if type(enabled) == "boolean" then
+    maintenanceModeEnabled = enabled
+  else
+    maintenanceModeEnabled = nil
+  end
+  requestState()
+end
+
 local function onExtensionLoaded()
   registerDamageListener()
 end
@@ -691,5 +704,6 @@ end
 M.onExtensionLoaded = onExtensionLoaded
 M.updateGFX = updateGFX
 M.requestState = requestState
+M.setMaintenanceModeEnabled = setMaintenanceModeEnabled
 M.onDamageDataChanged = onDamageDataChanged
 return M
