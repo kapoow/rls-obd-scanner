@@ -68,10 +68,10 @@
           </div>
         </section>
 
-        <section v-if="live.hasElectricDrive && live.motors?.length" class="card specs-card">
+        <section v-if="live.hasElectricDrive && motors.length" class="card specs-card">
           <h2>Drive motor specifications</h2>
           <div class="spec-list">
-            <template v-for="motor in live.motors" :key="motor.id">
+            <template v-for="motor in motors" :key="motor.id">
               <div><span>{{ motor.position ? `${motor.position} motor` : 'Motor' }}</span><strong>{{ motor.name }}</strong></div>
               <div v-if="isNumber(motor.ratedPowerKw)"><span>Peak power</span><strong>{{ whole(motor.ratedPowerKw) }} kW</strong></div>
               <div v-if="isNumber(motor.ratedTorqueNm)"><span>Peak torque</span><strong>{{ torque(motor.ratedTorqueNm) }}</strong></div>
@@ -117,7 +117,7 @@
           <h2>Drive motor diagnostics</h2>
           <StatusRow label="Current propulsion output" :bad="motorRestrictionNeedsAttention" :warn="motorOutputRestricted && !motorRestrictionNeedsAttention" :text="motorOutputText" />
           <StatusRow v-if="!motorOutputRestricted && isNumber(recentMotorTorqueAvailability)" label="Observed under-load output" warn :text="`${percent(recentMotorTorqueAvailability)} available`" />
-          <StatusRow v-for="motor in live.motors || []" :key="motor.id" :label="motor.position ? `${motor.position} motor` : motor.name" :bad="motor.broken === true || (motor.disabled === true && motor.hasEnergy === true)" :text="motor.broken === true ? 'Fault detected' : motor.disabled === true && motor.hasEnergy === true ? 'Unavailable' : 'Normal'" />
+          <StatusRow v-for="motor in motors" :key="motor.id" :label="motor.position ? `${motor.position} motor` : motor.name" :bad="motor.broken === true || (motor.disabled === true && motor.hasEnergy === true)" :text="motor.broken === true ? 'Fault detected' : motor.disabled === true && motor.hasEnergy === true ? 'Unavailable' : 'Normal'" />
         </section>
 
         <section v-if="!live.isElectric" class="card">
@@ -169,7 +169,7 @@
           <h2>Electric drive</h2>
           <div class="spec-list">
             <div v-if="driveLayout"><span>Drive layout</span><strong>{{ driveLayout }}</strong></div>
-            <template v-for="motor in live.motors || []" :key="motor.id">
+            <template v-for="motor in motors" :key="motor.id">
               <div><span>{{ motor.position || 'Drive motor' }}</span><strong>{{ motor.name }}</strong></div>
               <div v-if="motor.reductionName"><span>Reduction unit</span><strong>{{ motor.reductionName }}</strong></div>
               <div v-if="motor.reductionRatios?.length"><span>Reduction ratios</span><strong>{{ ratioList(motor.reductionRatios) }}</strong></div>
@@ -259,6 +259,9 @@ const { api } = useBridge()
 const events = useEvents()
 const tab = ref('live')
 const live = ref({})
+// BeamNG serializes an empty Lua table as an object. Keep every consumer on a
+// predictable array while preserving populated motor arrays for EVs/hybrids.
+const motors = computed(() => Array.isArray(live.value.motors) ? live.value.motors : [])
 const maintenance = ref({})
 const recentSymptoms = ref({})
 const liveUpdatedAt = ref(0)
@@ -335,7 +338,7 @@ const ignitionText = computed(() => live.value.isHybrid
     ? (live.value.ignition == null ? null : live.value.ignition >= 2 ? 'Ready' : live.value.ignition > 0 ? 'Accessory' : 'Off')
     : (live.value.engineRunning === true ? 'Engine running' : live.value.ignition == null ? null : live.value.ignition >= 2 ? 'Ignition on' : live.value.ignition > 0 ? 'Accessory' : 'Off'))
 const rpmPercent = computed(() => {
-  const motorMaximum = (live.value.motors || []).reduce((maximum, motor) => Math.max(maximum, isNumber(motor.maxRpm) ? motor.maxRpm : 0), 0)
+  const motorMaximum = motors.value.reduce((maximum, motor) => Math.max(maximum, isNumber(motor.maxRpm) ? motor.maxRpm : 0), 0)
   const maximum = live.value.hasElectricDrive ? motorMaximum : live.value.ecuLimiterRpm
   return isNumber(maximum) && maximum > 0 ? Math.min(100, Math.max(0, live.value.rpm / maximum * 100)) : 0
 })
@@ -411,7 +414,7 @@ const gearboxDisplayName = computed(() => live.value.gearboxName || (
 ))
 const hasDifferentialData = computed(() => Boolean(live.value.frontDifferential?.name || live.value.centerCoupling?.name || live.value.rearDifferential?.name))
 const driveLayout = computed(() => {
-  const motorPositions = (live.value.motors || []).map(motor => motor.position || '')
+  const motorPositions = motors.value.map(motor => motor.position || '')
   const hasFrontMotor = motorPositions.some(position => position.startsWith('Front'))
   const hasRearMotor = motorPositions.some(position => position.startsWith('Rear'))
   if (hasFrontMotor && hasRearMotor) return 'All-wheel drive'
