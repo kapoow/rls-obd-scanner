@@ -116,7 +116,7 @@
         <section v-if="live.hasElectricDrive" class="card">
           <h2>Drive motor diagnostics</h2>
           <StatusRow label="Current propulsion output" :bad="motorRestrictionNeedsAttention" :warn="motorOutputRestricted && !motorRestrictionNeedsAttention" :text="motorOutputText" />
-          <StatusRow v-if="!motorOutputRestricted && isNumber(recentMotorTorqueAvailability)" label="Observed under-load output" warn :text="`${percent(recentMotorTorqueAvailability)} available`" />
+          <StatusRow v-if="!motorOutputRestricted && isNumber(recentMotorTorqueAvailability)" label="Observed under-load output" :warn="true" :text="`${percent(recentMotorTorqueAvailability)} available`" />
           <StatusRow v-for="motor in motors" :key="motor.id" :label="motor.position ? `${motor.position} motor` : motor.name" :bad="motor.broken === true || (motor.disabled === true && motor.hasEnergy === true)" :text="motor.broken === true ? 'Fault detected' : motor.disabled === true && motor.hasEnergy === true ? 'Unavailable' : 'Normal'" />
         </section>
 
@@ -126,7 +126,7 @@
           <StatusRow v-if="live.forcedInductionName || live.forcedInductionType" label="Forced induction" :bad="inductionDamageActive" :warn="turboHotActive" :text="inductionDamageActive ? 'Fault detected' : turboHotActive ? 'Temperature high' : 'Normal'" />
           <StatusRow v-if="roughnessState" label="Combustion stability" :bad="roughnessState !== 'Normal'" :text="roughnessState" />
           <StatusRow v-if="misfireState" label="Estimated misfire risk" :bad="misfireState !== 'Normal'" :text="misfireState" />
-          <StatusRow v-if="maintenanceOnline && engine.activeSymptom" label="Active condition" bad :text="engine.activeSymptomLabel || 'Fault detected'" />
+          <StatusRow v-if="maintenanceOnline && engine.activeSymptom" label="Active condition" :warn="true" :text="activeSymptomText(engine)" />
         </section>
       </main>
 
@@ -219,7 +219,7 @@
           <h2>Drivetrain status</h2>
           <StatusRow v-if="isBoolean(live.clutchDamaged)" label="Clutch" :bad="live.clutchDamaged" :text="live.clutchDamaged ? 'Fault detected' : 'Normal'" />
           <StatusRow v-if="live.hasDrivingDynamicsControl" label="Vehicle stability control" :bad="stabilityControlDegraded" :text="stabilityControlDegraded ? 'Degraded' : 'Normal'" />
-          <StatusRow v-if="maintenanceOnline && transmission.activeSymptom" label="Active condition" bad :text="transmission.activeSymptomLabel || 'Fault detected'" />
+          <StatusRow v-if="maintenanceOnline && transmission.activeSymptom" label="Active condition" :warn="true" :text="activeSymptomText(transmission)" />
           <div v-for="risk in diagnosticRisks(transmission.riskFlags)" :key="risk.key" class="risk" :class="risk.severity">
             <b>{{ diagnosticRiskLabel(risk) }}</b><span v-if="diagnosticRiskDetail(risk)">{{ diagnosticRiskDetail(risk) }}</span>
           </div>
@@ -315,6 +315,16 @@ const DIAGNOSTIC_RISK_DEFINITIONS = {
 const SERVICE_ITEM_LABELS = {
   coolantIntegrity: 'Coolant condition',
   fluidCondition: 'Fluid quality',
+}
+
+const SERVICE_DUE_DETAILS = {
+  oilCondition: 'Engine oil service needed.',
+  oilLevel: 'Engine oil level needs attention.',
+  ignitionService: 'Ignition service needed.',
+  coolantLevel: 'Coolant level needs attention.',
+  coolantIntegrity: 'Cooling-system service needed.',
+  fluidCondition: 'Transmission-fluid service needed.',
+  fluidLevel: 'Transmission-fluid level needs attention.',
 }
 
 const TRANSMISSION_SYMPTOM_DEFINITIONS = {
@@ -452,7 +462,7 @@ const maintenanceOnline = computed(() => live.value.maintenanceModeEnabled === t
 const maintenanceUnavailableText = computed(() => live.value.maintenanceModeEnabled === false
   ? 'RLS Maintenance Mode is disabled for this career save. Native vehicle diagnostics remain available.'
   : 'Service information is still initializing or is not available for this vehicle.')
-const vehicleTitle = computed(() => isWalking.value ? 'No vehicle connected' : displayVehicleName.value || live.value.vehicleName || (liveOnline.value ? `Vehicle ${live.value.vehicleId}` : 'No connection'))
+const vehicleTitle = computed(() => isWalking.value ? 'No vehicle connected' : displayVehicleName.value || live.value.vehicleName || (liveOnline.value ? 'Connected vehicle' : 'No connection'))
 const ignitionText = computed(() => live.value.isHybrid
   ? (live.value.ignition == null ? null : live.value.ignition >= 2
       ? (live.value.generatorRunning ? 'Ready — generator running' : 'Ready — generator standby')
@@ -482,7 +492,9 @@ const nextServiceMiles = computed(() => {
     .filter(value => isNumber(value))
   return due.length ? Math.max(0, Math.min(...due)) : null
 })
-const nextServiceText = computed(() => distanceMiles(nextServiceMiles.value))
+const nextServiceText = computed(() => nextServiceMiles.value === null
+  ? null
+  : nextServiceMiles.value <= 0 ? 'Service due now' : distanceMiles(nextServiceMiles.value))
 const motorTorqueAvailability = computed(() => isNumber(live.value.motorRestrictionRatedTorqueNm) && live.value.motorRestrictionRatedTorqueNm > 0 && isNumber(live.value.motorTorqueLimitNm)
   ? Math.min(1, Math.max(0, live.value.motorTorqueLimitNm / live.value.motorRestrictionRatedTorqueNm))
   : null)
@@ -555,6 +567,7 @@ const diagnosticFindings = computed(() => buildDiagnosticFindings({
   friendlyFindingCause,
   powerLimitAction,
   maintenanceAction,
+  activeSymptomText,
   recentSymptom,
   transmissionSymptomFinding,
 }))
@@ -654,7 +667,7 @@ function categoryConditionState(category) {
   if (severity === 'bad') return 'Overdue'
   if (severity === 'warn') return 'Service due'
   if (severity === 'good') return 'No service due'
-  return 'Unknown'
+  return 'Not reported'
 }
 function highIsBadState(value, elevated, high) {
   if (!isNumber(value)) return null
@@ -682,6 +695,7 @@ function dueMaintenanceItem(category) {
 }
 function maintenanceAction(category, fallback) {
   const item = dueMaintenanceItem(category)
+  if (item?.name === 'ignitionService') return 'Inspect ignition system.'
   return item?.label ? `Service or inspect ${serviceItemLabel(item).toLowerCase()}.` : fallback
 }
 function effectivePowerLimitReason(reason) {
@@ -705,6 +719,12 @@ function recentSymptom(category, categoryName) {
   const observedAt = observed?.observedAt || Number(category?.lastFailureTime || 0)
   const ageSeconds = Date.now() / 1000 - observedAt
   return known.includes(type) && ageSeconds >= 0 && ageSeconds <= 300 ? type : null
+}
+function activeSymptomText(category) {
+  if (category?.activeSymptom === 'stall') return 'Momentary stall'
+  if (category?.activeSymptom === 'roughRunning') return 'Rough running'
+  if (category?.activeSymptom === 'ticking') return 'Engine ticking'
+  return category?.activeSymptomLabel || 'Fault detected'
 }
 function transmissionSymptomFinding(symptom, active) {
   const definition = TRANSMISSION_SYMPTOM_DEFINITIONS[symptom]
@@ -769,6 +789,8 @@ function diagnosticRiskDetail(risk) {
   if (!risk) return null
   const definition = DIAGNOSTIC_RISK_DEFINITIONS[risk.key]
   if (definition?.detail) return definition.detail
+  const dueItem = String(risk.key || '').match(/^(.+)_due$/)?.[1]
+  if (dueItem) return SERVICE_DUE_DETAILS[dueItem] || 'Service or inspection needed.'
   const detail = risk.detail
   if (!detail) return null
   if (/drive multiplier|limit stress|per sec/i.test(detail)) return null
@@ -790,5 +812,5 @@ function dueText(item) {
 .scanner::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.3)}
 .spec-list>div{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);font-size:10px}.spec-list>div:last-child{border-bottom:0}.spec-list span{color:var(--muted)}.spec-list strong{text-align:right}
 :deep(.differential-block){padding:9px 0;border-top:1px solid var(--line)}:deep(.differential-block:first-of-type){border-top:0;padding-top:0}:deep(.differential-block:last-child){padding-bottom:0}:deep(.differential-title){display:flex;justify-content:space-between;gap:10px;font-size:10px}:deep(.differential-title span){color:var(--muted);flex:0 0 auto}:deep(.differential-title strong){max-width:62%;text-align:right}:deep(.differential-settings){display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}:deep(.differential-settings span){display:flex;gap:4px;font-size:8px;color:var(--muted);background:#0d151d;padding:4px 6px;border-radius:5px}:deep(.differential-settings b){color:var(--text)}
-.finding{padding:9px;border-left:3px solid var(--amber);background:#211c14;margin-top:7px}.finding.high{border-color:var(--red);background:#251418}.finding>b{font-size:10px}.finding p{display:grid;grid-template-columns:82px 1fr;gap:6px;font-size:8px;line-height:1.4;margin:6px 0 0;color:var(--text)}.finding p span{color:var(--muted)}
+.finding{padding:9px;border-left:3px solid var(--amber);background:#211c14;margin-top:7px}.finding.high{border-color:var(--red);background:#251418}.finding>b{font-size:10px}.finding p{display:grid;grid-template-columns:82px 1fr;gap:6px;font-size:9px;line-height:1.4;margin:6px 0 0;color:var(--text)}.finding p span{color:var(--muted)}
 </style>

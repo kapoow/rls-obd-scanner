@@ -4,6 +4,7 @@ local M = {}
 local UPDATE_INTERVAL = 0.20
 local RECENT_EVENT_SECONDS = 300
 local timer = 0
+local milRequestMode = nil
 local recentClutchHeatSeconds = 0
 local recentClutchHeatPeakC = nil
 local recentMotorRestrictionSeconds = 0
@@ -504,24 +505,33 @@ local function maintenanceNeedsAttention()
   return false
 end
 
-local function shouldRequestMil(engine, thermals, ev)
-  if not engine then return false end
+local function getMilRequestMode(engine, thermals, ev)
+  if not engine then return nil end
 
   local nativeDamage = reportedBoolean(thermals, "pistonRingsDamaged") == true
     or reportedBoolean(thermals, "headGasketDamaged") == true
     or reportedBoolean(thermals, "connectingRodBearingsDamaged") == true
     or reportedBoolean(thermals, "engineHydrolocked") == true
-  if nativeDamage then return true end
+  if nativeDamage then return "steady" end
 
   local coolantTemp = firstNumber(ev.watertemp, ev.coolantTemperature, thermals and thermals.coolantTemperature)
-  if coolantTemp and coolantTemp >= 120 then return true end
+  if coolantTemp and coolantTemp >= 120 then return "steady" end
 
   local ratedTorque = number(engine.maxTorque)
   local torqueLimit = number(engine.maxTorqueLimit)
   local meaningfulRestriction = ratedTorque and ratedTorque > 0 and torqueLimit and torqueLimit < ratedTorque * 0.97
   -- RLS also reduces output as engines age. Only turn that restriction into a
   -- dashboard warning when an engine or cooling item is actually service-due.
-  return meaningfulRestriction and maintenanceNeedsAttention()
+  if not meaningfulRestriction or not maintenanceNeedsAttention() then return nil end
+
+  -- A high applied ignition-error chance is an active severe fault, so keep the
+  -- MIL asserted. Less severe overdue maintenance retains the brief advisory
+  -- pulse produced by the slower scanner update.
+  local ignitionErrorChance = math.max(
+    number(engine.fastIgnitionErrorChance) or 0,
+    number(engine.slowIgnitionErrorChance) or 0
+  )
+  return ignitionErrorChance >= 0.02 and "steady" or "pulse"
 end
 
 local function collectLiveDevices()
@@ -680,6 +690,9 @@ local function updateGFX(dt)
   recentClutchHeatSeconds = math.max(0, recentClutchHeatSeconds - elapsed)
   recentMotorRestrictionSeconds = math.max(0, recentMotorRestrictionSeconds - elapsed)
   updateRecentDamageEvents(elapsed)
+  if milRequestMode == "steady" and electrics and electrics.values then
+    electrics.values.checkengine = true
+  end
   if timer < UPDATE_INTERVAL then return end
   timer = 0
   local devices = collectLiveDevices()
@@ -707,8 +720,10 @@ local function updateGFX(dt)
   elseif recentClutchHeatSeconds <= 0 then
     recentClutchHeatPeakC = nil
   end
-  if shouldRequestMil(engine, engine and engine.thermals or nil, ev) then
-    -- Only assert the MIL. The native vehicle controller remains responsible for clearing it.
+  milRequestMode = getMilRequestMode(engine, engine and engine.thermals or nil, ev)
+  if milRequestMode then
+    -- Never write false: when the RLS condition clears, the native vehicle
+    -- controller immediately regains sole ownership of the warning state.
     ev.checkengine = true
   end
   if streams and streams.willSend and streams.willSend("rlsObdScannerData") then

@@ -69,7 +69,7 @@ function buildNativeEngineConditionFindings({ live, pistonRingsDamaged }) {
 
 function buildMaintenanceFindings(context) {
   const { engine, radiator, powerLimited, powerLimitReason, friendlyFindingCause,
-    powerLimitAction, maintenanceAction } = context
+    powerLimitAction, maintenanceAction, activeSymptomText } = context
   const findings = []
   if (powerLimited) {
     const cooling = radiator.liveMetrics?.powerLimitActive === true
@@ -81,7 +81,7 @@ function buildMaintenanceFindings(context) {
       action: powerLimitAction(powerLimitReason, cooling),
     })
   }
-  if (!powerLimited && engine.activeSymptom) findings.push({ key: 'engine-symptom', severity: 'medium', title: engine.activeSymptomLabel || 'Active engine condition', cause: 'An intermittent engine fault is currently active.', effect: 'Engine response or combustion quality may be affected.', action: maintenanceAction(engine, 'Inspect the engine and its service condition.') })
+  if (!powerLimited && engine.activeSymptom) findings.push({ key: 'engine-symptom', severity: 'medium', title: activeSymptomText(engine), cause: 'An intermittent engine fault is currently active.', effect: 'Engine response or combustion quality may be affected.', action: maintenanceAction(engine, 'Inspect the engine and its service condition.') })
   if (radiator.activeSymptom && !powerLimited) findings.push({ key: 'cooling-symptom', severity: 'medium', title: radiator.activeSymptomLabel || 'Active cooling-system condition', cause: 'The cooling system has detected an abnormal operating condition.', effect: 'Cooling performance may be reduced.', action: maintenanceAction(radiator, 'Inspect the cooling system.') })
   return findings
 }
