@@ -62,10 +62,10 @@ async function injectApp() {
   const mod = await import("@/modules/career/utils/phoneAppRegistry")
   const { lua, useBridge } = await import("@/bridge")
   if (typeof mod.usePhoneApps !== "function") return false
-  const { catalogApps, availableApps } = mod.usePhoneApps()
+  const { catalogApps, setInstalledApps } = mod.usePhoneApps()
   const { events } = useBridge()
   const app = definition()
-  let installed = null
+  let installedAppIds = null
   const syncVehicleMonitor = () => {
     const api = window.bngApi || window.beamng
     if (typeof api?.engineLua !== "function") {
@@ -81,24 +81,24 @@ async function injectApp() {
     const list = catalogApps
     if (Array.isArray(list?.value) && !list.value.some(item => item?.id === APP_ID)) list.value.push(app)
   }
-  const syncAvailable = () => {
-    if (!Array.isArray(availableApps?.value)) return
-    const present = availableApps.value.some(item => item?.id === APP_ID)
-    if (installed && !present) availableApps.value.push(app)
-    if (!installed && present) availableApps.value = availableApps.value.filter(item => item?.id !== APP_ID)
+  const normalizeIds = value => {
+    if (Array.isArray(value)) return value
+    if (value && typeof value === "object") return Object.values(value)
+    return []
+  }
+  const syncInstalledApps = () => {
+    if (installedAppIds) setInstalledApps(installedAppIds)
   }
   const onLayoutData = data => {
-    const nextInstalled = Array.isArray(data?.installedAppIds) && data.installedAppIds.includes(APP_ID)
-    installed = nextInstalled
+    installedAppIds = normalizeIds(data?.installedAppIds)
     ensureCatalog()
-    syncAvailable()
+    syncInstalledApps()
     syncVehicleMonitor()
   }
   ensureCatalog()
-  syncAvailable()
   stopWatch = window.Vue.watch(
-    () => [catalogApps?.value, availableApps?.value],
-    () => { ensureCatalog(); syncAvailable() },
+    () => catalogApps?.value,
+    () => { ensureCatalog(); syncInstalledApps() },
     { flush: "post" }
   )
   events.on('phoneLayoutData', onLayoutData)
