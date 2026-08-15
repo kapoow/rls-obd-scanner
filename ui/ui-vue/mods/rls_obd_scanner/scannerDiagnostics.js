@@ -73,10 +73,9 @@ function buildMaintenanceFindings(context) {
   const findings = []
   if (powerLimited) {
     const cooling = radiator.liveMetrics?.powerLimitActive === true
-    const ageRelated = powerLimitReason === 'Old engine top-end loss'
     findings.push({
-      key: 'output-restriction', severity: cooling ? 'high' : 'medium', attention: !ageRelated,
-      title: ageRelated ? 'Age-related performance loss' : 'Engine output restricted',
+      key: 'output-restriction', severity: cooling ? 'high' : 'medium', attention: true,
+      title: 'Engine output restricted',
       cause: friendlyFindingCause(powerLimitReason), effect: 'Available engine torque or power is currently reduced.',
       action: powerLimitAction(powerLimitReason, cooling),
     })

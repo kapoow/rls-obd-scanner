@@ -122,7 +122,7 @@
 
         <section v-if="!live.isElectric" class="card">
           <h2>{{ live.isHybrid ? 'Generator engine diagnostics' : 'Diagnostics' }}</h2>
-          <StatusRow v-if="maintenanceOnline" label="Output restriction" :bad="powerLimited && powerLimitReason !== 'Old engine top-end loss'" :warn="powerLimited && powerLimitReason === 'Old engine top-end loss'" :text="powerLimitText" />
+          <StatusRow v-if="maintenanceOnline" label="Output restriction" :bad="powerLimited" :text="powerLimitText" />
           <StatusRow v-if="live.forcedInductionName || live.forcedInductionType" label="Forced induction" :bad="inductionDamageActive" :warn="turboHotActive" :text="inductionDamageActive ? 'Fault detected' : turboHotActive ? 'Temperature high' : 'Normal'" />
           <StatusRow v-if="roughnessState" label="Combustion stability" :bad="roughnessState !== 'Normal'" :text="roughnessState" />
           <StatusRow v-if="misfireState" label="Estimated misfire risk" :bad="misfireState !== 'Normal'" :text="misfireState" />
@@ -272,11 +272,6 @@ const POWER_LIMIT_DEFINITIONS = {
   'Severe ignition issue': {
     status: 'Reduced — ignition fault',
     cause: 'Ignition-system condition is limiting engine output.',
-  },
-  'Old engine top-end loss': {
-    status: 'Reduced — engine wear',
-    cause: 'Internal engine wear is reducing available output.',
-    action: 'No routine service is due. Test engine output or compression; rebuild or replace the worn engine to restore performance.',
   },
   'Maintenance torque protection': {
     status: 'Reduced — service condition',
@@ -516,8 +511,7 @@ const motorUnavailable = computed(() => live.value.hasElectricDrive && live.valu
 const powerLimited = computed(() => motorOutputRestricted.value || engine.value.liveMetrics?.powerCapActive === true || radiator.value.liveMetrics?.powerLimitActive === true)
 const powerLimitReason = computed(() => {
   const cooling = radiator.value.liveMetrics?.powerLimitActive === true
-  const reported = cooling ? radiator.value.liveMetrics?.powerLimitReason : engine.value.liveMetrics?.powerLimitReason
-  return effectivePowerLimitReason(reported)
+  return cooling ? radiator.value.liveMetrics?.powerLimitReason : engine.value.liveMetrics?.powerLimitReason
 })
 const powerLimitText = computed(() => powerLimited.value
   ? friendlyLimitReason(powerLimitReason.value)
@@ -697,12 +691,6 @@ function maintenanceAction(category, fallback) {
   const item = dueMaintenanceItem(category)
   if (item?.name === 'ignitionService') return 'Inspect ignition system.'
   return item?.label ? `Service or inspect ${serviceItemLabel(item).toLowerCase()}.` : fallback
-}
-function effectivePowerLimitReason(reason) {
-  if (reason === 'Maintenance torque protection' && !dueMaintenanceItem(engine.value) && (engine.value.avgMiles || 0) >= 180000) {
-    return 'Old engine top-end loss'
-  }
-  return reason
 }
 function powerLimitAction(reason, cooling) {
   if (cooling) return maintenanceAction(radiator.value, 'Inspect coolant temperature, level, and the cooling system for faults.')

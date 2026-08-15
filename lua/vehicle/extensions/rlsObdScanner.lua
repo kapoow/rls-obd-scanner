@@ -520,7 +520,8 @@ local function getMilRequestMode(engine, thermals, ev)
   local ratedTorque = number(engine.maxTorque)
   local torqueLimit = number(engine.maxTorqueLimit)
   local meaningfulRestriction = ratedTorque and ratedTorque > 0 and torqueLimit and torqueLimit < ratedTorque * 0.97
-  -- RLS also reduces output as engines age. Only turn that restriction into a
+  -- RLS restricts output for oil starvation, overheating, ignition faults, and
+  -- damage (no longer for mileage age alone). Only turn that restriction into a
   -- dashboard warning when an engine or cooling item is actually service-due.
   if not meaningfulRestriction or not maintenanceNeedsAttention() then return nil end
 

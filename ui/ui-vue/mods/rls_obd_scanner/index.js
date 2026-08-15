@@ -67,13 +67,15 @@ async function injectApp() {
   const app = definition()
   let installed = null
   const syncVehicleMonitor = () => {
-    try {
-      Promise.resolve(lua.rlsObd_routes.ensureVehicleMonitor()).catch(error => {
-        console.warn(TAG, "vehicle monitor sync failed", error)
-      })
-    } catch (error) {
-      console.warn(TAG, "vehicle monitor sync failed", error)
+    const api = window.bngApi || window.beamng
+    if (typeof api?.engineLua !== "function") {
+      console.warn(TAG, "vehicle monitor sync skipped: engine Lua bridge unavailable")
+      return
     }
+    api.engineLua(
+      "if not extensions.isExtensionLoaded('rlsObd_routes') then extensions.load('rlsObd_routes') end; " +
+      "if rlsObd_routes and rlsObd_routes.ensureVehicleMonitor then rlsObd_routes.ensureVehicleMonitor() end"
+    )
   }
   const ensureCatalog = () => {
     const list = catalogApps
