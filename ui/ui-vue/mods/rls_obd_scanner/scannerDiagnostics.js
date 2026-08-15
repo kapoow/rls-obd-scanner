@@ -4,7 +4,7 @@ function buildPneumaticFindings({ live, isNumber, airPressure }) {
     key: 'low-air-pressure', severity: 'high', title: 'Low air pressure',
     cause: isNumber(live.airPressurePa)
       ? `The pneumatic system currently reports ${airPressure(live.airPressurePa)}.`
-      : 'BeamNG reports that pneumatic-system pressure is below its operating threshold.',
+      : 'Pneumatic-system pressure is below its operating threshold.',
     effect: live.parkingBrakeApplied === true
       ? 'The spring parking brake is applied and may not release until pressure recovers.'
       : 'Air-brake and pneumatic-system operation may be limited until pressure recovers.',
@@ -19,7 +19,7 @@ function buildElectricDriveFindings(context) {
   const findings = []
   if (live.motorBroken === true) findings.push({
     key: 'motor-broken', severity: 'high', title: 'Drive motor fault detected',
-    cause: 'BeamNG reports that the installed drive motor is mechanically broken.',
+    cause: 'The installed drive motor has mechanically failed.',
     effect: 'The motor cannot provide normal propulsion.',
     action: 'Inspect and repair or replace the damaged drive motor.',
   })
