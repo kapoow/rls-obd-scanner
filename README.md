@@ -55,6 +55,19 @@ initialize, repair, or otherwise modify maintenance data.
 Download the release archive and place it in your BeamNG.drive `mods` folder.
 Start an RLS career, open the phone app store, and install **OBD Scanner**.
 
+### Latest development version
+
+For changes newer than the latest release, use **Code → Download ZIP** on
+GitHub and extract it. Then either:
+
+- Place the extracted repository folder in `BeamNG.drive/mods/unpacked/`, or
+- Create a new ZIP containing `lua/`, `scripts/`, and `ui/` directly at its
+  root, then place it in `BeamNG.drive/mods/`.
+
+Do not place GitHub's downloaded source ZIP directly in the mods folder because
+it contains an extra top-level directory. Development versions may be less
+thoroughly tested than release archives.
+
 Background monitoring is enabled only for career saves where the phone app is
 installed.
 

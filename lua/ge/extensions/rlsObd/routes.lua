@@ -6,6 +6,58 @@ local TAG = "rlsObd_routes"
 local SOURCE = "rls-obd-scanner"
 local ROUTE = "phone-obd-scanner"
 local APP_ID = "rls-obd-scanner"
+local GLOBAL_PHONE_LAYOUT = "settings/RLS/phoneLayout.json"
+
+local function removeAppId(list)
+  if type(list) ~= "table" then return list, false end
+  local out = {}
+  local changed = false
+  for _, value in ipairs(list) do
+    if value == APP_ID then
+      changed = true
+    else
+      out[#out + 1] = value
+    end
+  end
+  return out, changed
+end
+
+-- Older scanner builds could leak the app into RLS's global fallback layout.
+-- New career saves inherit that fallback before they have their own layout, so
+-- keep this career-only app out of the global installed/home-screen lists.
+local function cleanLegacyGlobalInstall()
+  local layout = jsonReadFile(GLOBAL_PHONE_LAYOUT)
+  if type(layout) ~= "table" then return end
+
+  local changed = false
+  local removed
+  layout.installedAppIds, removed = removeAppId(layout.installedAppIds)
+  changed = changed or removed
+  layout.dock, removed = removeAppId(layout.dock)
+  changed = changed or removed
+  for _, page in ipairs(layout.pages or {}) do
+    if type(page) == "table" and type(page.apps) == "table" then
+      for index, value in ipairs(page.apps) do
+        if value == APP_ID then
+          page.apps[index] = ""
+          changed = true
+        end
+      end
+    end
+  end
+  if not changed then return end
+
+  local ok = false
+  if career_saveSystem and career_saveSystem.jsonWriteFileSafe then
+    ok = career_saveSystem.jsonWriteFileSafe(GLOBAL_PHONE_LAYOUT, layout, true)
+  elseif jsonWriteFileSafe then
+    ok = jsonWriteFileSafe(GLOBAL_PHONE_LAYOUT, layout, true)
+  elseif jsonWriteFile then
+    ok = jsonWriteFile(GLOBAL_PHONE_LAYOUT, layout, true)
+  end
+  log(ok and "I" or "E", TAG, ok and "removed legacy scanner install from global phone layout"
+    or "failed to clean legacy scanner install from global phone layout")
+end
 
 local function careerActive()
   return career_career and career_career.isActive and career_career.isActive() == true
@@ -75,6 +127,7 @@ local function unregister()
 end
 
 local function onExtensionLoaded()
+  cleanLegacyGlobalInstall()
   register()
   ensureVehicleMonitor()
 end
