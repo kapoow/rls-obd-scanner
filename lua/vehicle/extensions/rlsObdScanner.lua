@@ -447,21 +447,31 @@ local function displayedTuningValue(part, title, actualValue)
   return nil
 end
 
+local function partDefinesPowertrainValue(part, deviceName, fieldName)
+  if type(part) ~= "table" or type(part.powertrain) ~= "table" then return false end
+  for _, row in ipairs(part.powertrain) do
+    local options = type(row) == "table" and row[5] or nil
+    if type(row) == "table" and row[2] == deviceName
+      and type(options) == "table" and options[fieldName] ~= nil then
+      return true
+    end
+  end
+  return false
+end
+
 local function differentialData(axis)
   local key = axis:lower()
-  local device = powertrain and powertrain.getDevice and powertrain.getDevice("differential_" .. axis) or nil
+  local deviceName = "differential_" .. axis
+  local device = powertrain and powertrain.getDevice and powertrain.getDevice(deviceName) or nil
   local part, name = findActivePart("differential_" .. key, "differential")
   if not device and not name then return nil end
-  local differentialName = tostring(name or ""):lower()
-  local hasLimitedSlip = differentialName:find("limited slip", 1, true)
-    or differentialName:find("locking", 1, true)
-    or differentialName:find("welded", 1, true)
   return {
     name = name,
     finalDriveRatio = finalDriveRatio(axis),
     powerLockPercent = displayedTuningValue(part, "Power Lock Rate", device and device.lsdLockCoef),
     coastLockPercent = displayedTuningValue(part, "Coast Lock Rate", device and device.lsdRevLockCoef),
-    preloadNm = hasLimitedSlip and device and number(device.lsdPreload) or nil,
+    preloadNm = partDefinesPowertrainValue(part, deviceName, "lsdPreload")
+      and device and number(device.lsdPreload) or nil,
   }
 end
 
@@ -578,9 +588,9 @@ local function buildState(devices)
   -- one. Some clutch devices derive lockTorque from engine output at runtime;
   -- that is not an installed-part torque specification.
   local clutchRatedTorque = clutchConfig and number(clutchConfig.lockTorque) or nil
-  local clutchAvailableTorque = nil
-  if clutchRatedTorque and clutch then
-    clutchAvailableTorque = math.max(0, (number(clutch.lockTorque) or clutchRatedTorque)
+  local clutchAvailableTorque = clutch and number(clutch.lockTorque) or nil
+  if clutchAvailableTorque then
+    clutchAvailableTorque = math.max(0, clutchAvailableTorque
       * (number(clutch.thermalEfficiency) or 1)
       * (number(clutch.damageLockTorqueCoef) or 1)
       * (number(clutch.wearLockTorqueCoef) or 1))

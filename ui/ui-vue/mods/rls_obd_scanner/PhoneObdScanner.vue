@@ -189,7 +189,7 @@
             <div v-if="live.clutchName"><span>Clutch</span><strong>{{ live.clutchName }}</strong></div>
             <div v-if="live.flywheelName"><span>Flywheel</span><strong>{{ live.flywheelName }}</strong></div>
             <div v-if="isNumber(live.clutchRatedTorqueNm)"><span>Rated clutch capacity</span><strong>{{ torque(live.clutchRatedTorqueNm) }}</strong></div>
-            <div v-if="clutchCapacityReduced"><span>Available clutch capacity</span><strong>{{ torque(live.clutchAvailableTorqueNm) }}</strong></div>
+            <div v-if="isNumber(live.clutchAvailableTorqueNm)"><span>Current clutch capacity</span><strong>{{ torque(live.clutchAvailableTorqueNm) }}</strong></div>
           </div>
         </section>
 
@@ -594,10 +594,10 @@ const driveLayout = computed(() => {
       ? 'Rear-wheel drive'
       : null
 })
-const hasClutchData = computed(() => Boolean(live.value.clutchName) || isNumber(live.value.clutchRatedTorqueNm) || isBoolean(live.value.clutchDamaged))
-const clutchCapacityReduced = computed(() => isNumber(live.value.clutchRatedTorqueNm)
-  && isNumber(live.value.clutchAvailableTorqueNm)
-  && live.value.clutchAvailableTorqueNm < live.value.clutchRatedTorqueNm * 0.97)
+const hasClutchData = computed(() => Boolean(live.value.clutchName)
+  || isNumber(live.value.clutchRatedTorqueNm)
+  || isNumber(live.value.clutchAvailableTorqueNm)
+  || isBoolean(live.value.clutchDamaged))
 const hasDrivetrainStatus = computed(() => isBoolean(live.value.clutchDamaged) || Boolean(
   maintenanceOnline.value && transmission.value.activeSymptom
 ) || diagnosticRisks(transmission.value.riskFlags).length > 0 || live.value.hasDrivingDynamicsControl === true)
