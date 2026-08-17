@@ -158,7 +158,7 @@
               <div class="service-bar"><i :style="{ width: clampPercent(item.value) + '%', backgroundColor: conditionColor(item.value) }"></i></div>
               <small v-if="dueText(item)">{{ dueText(item) }}</small>
             </div>
-            <div v-for="risk in diagnosticRisks(category.data.riskFlags)" :key="risk.key" class="risk" :class="risk.severity">
+            <div v-for="risk in diagnosticRisks(category.data.riskFlags, category.data, category.key)" :key="risk.key" class="risk" :class="risk.severity">
               <b>{{ diagnosticRiskLabel(risk) }}</b><span v-if="diagnosticRiskDetail(risk)">{{ diagnosticRiskDetail(risk) }}</span>
             </div>
           </section>
@@ -220,7 +220,7 @@
           <StatusRow v-if="isBoolean(live.clutchDamaged)" label="Clutch" :bad="live.clutchDamaged" :text="live.clutchDamaged ? 'Fault detected' : 'Normal'" />
           <StatusRow v-if="live.hasDrivingDynamicsControl" label="Vehicle stability control" :bad="stabilityControlDegraded" :text="stabilityControlDegraded ? 'Degraded' : 'Normal'" />
           <StatusRow v-if="maintenanceOnline && transmission.activeSymptom" label="Active condition" :warn="true" :text="activeSymptomText(transmission)" />
-          <div v-for="risk in diagnosticRisks(transmission.riskFlags)" :key="risk.key" class="risk" :class="risk.severity">
+          <div v-for="risk in diagnosticRisks(transmission.riskFlags, transmission, 'transmission')" :key="risk.key" class="risk" :class="risk.severity">
             <b>{{ diagnosticRiskLabel(risk) }}</b><span v-if="diagnosticRiskDetail(risk)">{{ diagnosticRiskDetail(risk) }}</span>
           </div>
         </section>
@@ -765,16 +765,45 @@ function friendlyLimitReason(reason) {
   return POWER_LIMIT_DEFINITIONS[reason]?.status || (reason ? `Reduced — ${reason}` : 'Reduced')
 }
 function diagnosticRiskLabel(risk) {
+  if (risk?.scannerLabel) return risk.scannerLabel
   if (DIAGNOSTIC_RISK_DEFINITIONS[risk?.key]) return DIAGNOSTIC_RISK_DEFINITIONS[risk.key].label
   if (/_due$/.test(risk?.key || '')) return 'Service overdue'
   return null
 }
-function diagnosticRisks(risks) {
+function wearSpikePresentation(category, categoryKey) {
+  const lowFluidMultiplier = Number(category?.lowFluidConditionMultiplier)
+  if (Number.isFinite(lowFluidMultiplier) && lowFluidMultiplier > 1.05) {
+    const fluid = categoryKey === 'engine' ? 'oil' : categoryKey === 'radiator' ? 'coolant' : 'transmission fluid'
+    return {
+      label: `Low ${fluid} level is increasing wear`,
+      detail: `Restore the ${fluid} level to reduce component wear.`,
+    }
+  }
+
+  const mileageMultiplier = Number(category?.levelMileageMultiplier)
+  const driveMultipliers = Object.values(category?.driveMultipliers || {}).filter(isNumber)
+  const highestDrivingMultiplier = driveMultipliers.length ? Math.max(...driveMultipliers) : null
+  if (Number.isFinite(mileageMultiplier) && mileageMultiplier >= 1.45
+      && (!isNumber(highestDrivingMultiplier) || highestDrivingMultiplier < 1.45)) {
+    return {
+      label: 'Age-related fluid consumption',
+      detail: 'High vehicle mileage is increasing fluid consumption.',
+    }
+  }
+
+  return DIAGNOSTIC_RISK_DEFINITIONS.wear_spike
+}
+function diagnosticRisks(risks, category = null, categoryKey = null) {
   const list = Array.isArray(risks) ? risks : Object.values(risks || {})
-  return list.filter(risk => diagnosticRiskLabel(risk))
+  return list.map(risk => {
+    if (risk?.key !== 'wear_spike') return risk
+    const presentation = wearSpikePresentation(category, categoryKey)
+    return { ...risk, scannerLabel: presentation.label, scannerDetail: presentation.detail }
+  }).filter(risk => diagnosticRiskLabel(risk))
 }
 function diagnosticRiskDetail(risk) {
   if (!risk) return null
+  if (risk.scannerDetail) return risk.scannerDetail
   const definition = DIAGNOSTIC_RISK_DEFINITIONS[risk.key]
   if (definition?.detail) return definition.detail
   const dueItem = String(risk.key || '').match(/^(.+)_due$/)?.[1]
