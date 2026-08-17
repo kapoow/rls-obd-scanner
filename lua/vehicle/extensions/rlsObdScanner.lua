@@ -114,8 +114,15 @@ local function getElectricMotors()
 end
 
 local function getGearbox()
+  if powertrain and powertrain.getDevice then
+    local mainGearbox = powertrain.getDevice("gearbox")
+    if mainGearbox then return mainGearbox end
+  end
   local devices = powertrain and powertrain.getDevicesByCategory and powertrain.getDevicesByCategory("gearbox") or nil
-  return devices and devices[1] or nil
+  for _, device in pairs(devices or {}) do
+    if device.type ~= "rangeBox" then return device end
+  end
+  return nil
 end
 
 local function getClutch()
@@ -292,6 +299,53 @@ local function findActivePart(slotNeedle, nameNeedle, excludedName)
   return nil
 end
 
+local function findActivePartForPowertrainDevice(deviceName)
+  local activeParts = v and v.data and v.data.activePartsData or nil
+  if type(activeParts) ~= "table" then return nil end
+  for _, part in pairs(activeParts) do
+    local partPowertrain = type(part) == "table" and part.powertrain or nil
+    for _, row in ipairs(type(partPowertrain) == "table" and partPowertrain or {}) do
+      if type(row) == "table" and row[2] == deviceName then
+        local partName = tostring(part.information and part.information.name or "")
+        return part, partName ~= "" and partName or nil
+      end
+    end
+  end
+  return nil
+end
+
+local function deviceHasMode(device, wantedMode)
+  for _, mode in pairs(type(device) == "table" and device.availableModes or {}) do
+    if mode == wantedMode then return true end
+  end
+  return false
+end
+
+local function transferCaseData(partName)
+  if not powertrain then return nil end
+  local devices = powertrain.getDevices and powertrain.getDevices() or {}
+  local rangeBox, selectableDrive = nil, nil
+  for deviceName, device in pairs(devices or {}) do
+    if device.type == "rangeBox" and deviceHasMode(device, "high") and deviceHasMode(device, "low") then
+      rangeBox = rangeBox or device
+    end
+    if tostring(deviceName):lower():find("transfer", 1, true)
+      and deviceHasMode(device, "connected") and deviceHasMode(device, "disconnected") then
+      selectableDrive = selectableDrive or device
+    end
+  end
+  if not partName and not rangeBox and not selectableDrive then return nil end
+  local currentDriveMode = selectableDrive and ({connected = "4WD", disconnected = "2WD"})[selectableDrive.mode] or nil
+  local currentRangeMode = rangeBox and ({high = "High", low = "Low"})[rangeBox.mode] or nil
+  return {
+    name = partName,
+    driveModes = selectableDrive and {"2WD", "4WD"} or nil,
+    rangeModes = rangeBox and {"High", "Low"} or nil,
+    currentDriveMode = currentDriveMode,
+    currentRangeMode = currentRangeMode,
+  }
+end
+
 local function findEngineName()
   local activeParts = v and v.data and v.data.activePartsData or nil
   if type(activeParts) ~= "table" then return nil end
@@ -463,11 +517,12 @@ local function differentialData(axis)
   local key = axis:lower()
   local deviceName = "differential_" .. axis
   local device = powertrain and powertrain.getDevice and powertrain.getDevice(deviceName) or nil
-  local part, name = findActivePart("differential_" .. key, "differential")
+  local part, name = findActivePartForPowertrainDevice(deviceName)
+  if not name then part, name = findActivePart("differential_" .. key, "differential") end
   if not device and not name then return nil end
   return {
     name = name,
-    finalDriveRatio = finalDriveRatio(axis),
+    finalDriveRatio = firstNumber(finalDriveRatio(axis), device and device.gearRatio),
     powerLockPercent = displayedTuningValue(part, "Power Lock Rate", device and device.lsdLockCoef),
     coastLockPercent = displayedTuningValue(part, "Coast Lock Rate", device and device.lsdRevLockCoef),
     preloadNm = partDefinesPowertrainValue(part, deviceName, "lsdPreload")
@@ -602,6 +657,7 @@ local function buildState(devices)
   local _, gearboxName = findActivePart("transmission", "transmission")
   local clutchName, flywheelName = findClutchAndFlywheelNames()
   local _, centerCouplingName = findActivePart("transfer_case", nil)
+  local transferCase = transferCaseData(centerCouplingName)
   local _, turbochargerName = findActivePart("", "turbocharger")
   local _, superchargerName = findActivePart("", "supercharger")
   -- Output figures describe the current installed configuration's peak output.
@@ -690,7 +746,9 @@ local function buildState(devices)
     recentDamageEvents = recentDamageEventData(),
     clutchDamaged = reportedBoolean(clutch, "clutchPermanentlyDamaged"),
     frontDifferential = differentialData("F"),
-    centerCoupling = centerCouplingName and {name = centerCouplingName} or nil,
+    transferCase = transferCase,
+    centerCoupling = centerCouplingName and not (transferCase and (transferCase.driveModes or transferCase.rangeModes))
+      and {name = centerCouplingName} or nil,
     rearDifferential = differentialData("R"),
   }
 end

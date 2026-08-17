@@ -193,6 +193,16 @@
           </div>
         </section>
 
+        <section v-if="live.transferCase" class="card specs-card">
+          <h2>Transfer case</h2>
+          <div class="spec-list">
+            <div v-if="live.transferCase.name"><span>Transfer case</span><strong>{{ live.transferCase.name }}</strong></div>
+            <div v-if="live.transferCase.driveModes?.length"><span>Drive modes</span><strong>{{ live.transferCase.driveModes.join(' / ') }}</strong></div>
+            <div v-if="live.transferCase.rangeModes?.length"><span>Range modes</span><strong>{{ live.transferCase.rangeModes.join(' / ') }}</strong></div>
+            <div v-if="transferCaseCurrentMode"><span>Current mode</span><strong>{{ transferCaseCurrentMode }}</strong></div>
+          </div>
+        </section>
+
         <section v-if="!live.hasElectricDrive" class="card grid">
           <Metric label="Shift response" :value="shiftQualityState" :warn="shiftQualityState !== 'Normal'" />
           <Metric v-if="hasClutchData" label="Estimated clutch condition" :value="clutchWearState" :warn="clutchWearState !== 'Normal'" />
@@ -579,6 +589,10 @@ const gearboxDisplayName = computed(() => live.value.gearboxName || (
     : transmissionType.value
 ))
 const hasDifferentialData = computed(() => Boolean(live.value.frontDifferential?.name || live.value.centerCoupling?.name || live.value.rearDifferential?.name))
+const transferCaseCurrentMode = computed(() => [
+  live.value.transferCase?.currentDriveMode,
+  live.value.transferCase?.currentRangeMode,
+].filter(Boolean).join(' ') || null)
 const driveLayout = computed(() => {
   const motorPositions = motors.value.map(motor => motor.position || '')
   const hasFrontMotor = motorPositions.some(position => position.startsWith('Front'))
