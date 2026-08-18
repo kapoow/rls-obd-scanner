@@ -297,6 +297,8 @@ const POWER_LIMIT_DEFINITIONS = {
 
 const DIAGNOSTIC_RISK_DEFINITIONS = {
   wear_spike: { label: 'Accelerated wear detected', detail: 'Wear rate is currently above normal.' },
+  age_fluid_loss: { label: 'Age-related fluid consumption', detail: 'Component age is increasing fluid consumption.' },
+  fluid_neglect: { label: 'Low fluid level is accelerating fluid loss', detail: 'Restore the fluid to its correct level.' },
   high_output: { label: 'Powertrain load is increasing wear' },
   limit_stress: { label: 'Transmission load is high', detail: 'Operating demand is close to the transmission capacity.' },
   failure_window: { label: 'Transmission failure risk detected', detail: 'Continued operation may cause a mechanical failure.' },
@@ -784,10 +786,16 @@ function diagnosticRiskLabel(risk) {
   if (/_due$/.test(risk?.key || '')) return 'Service overdue'
   return null
 }
+function categoryFluid(categoryKey) {
+  if (categoryKey === 'engine') return 'oil'
+  if (categoryKey === 'radiator') return 'coolant'
+  if (categoryKey === 'transmission') return 'transmission fluid'
+  return 'fluid'
+}
 function wearSpikePresentation(category, categoryKey) {
   const lowFluidMultiplier = Number(category?.lowFluidConditionMultiplier)
   if (Number.isFinite(lowFluidMultiplier) && lowFluidMultiplier > 1.05) {
-    const fluid = categoryKey === 'engine' ? 'oil' : categoryKey === 'radiator' ? 'coolant' : 'transmission fluid'
+    const fluid = categoryFluid(categoryKey)
     return {
       label: `Low ${fluid} level is increasing wear`,
       detail: `Restore the ${fluid} level to reduce component wear.`,
@@ -801,7 +809,7 @@ function wearSpikePresentation(category, categoryKey) {
       && (!isNumber(highestDrivingMultiplier) || highestDrivingMultiplier < 1.45)) {
     return {
       label: 'Age-related fluid consumption',
-      detail: 'High vehicle mileage is increasing fluid consumption.',
+      detail: 'Component age is increasing fluid consumption.',
     }
   }
 
@@ -810,8 +818,22 @@ function wearSpikePresentation(category, categoryKey) {
 function diagnosticRisks(risks, category = null, categoryKey = null) {
   const list = Array.isArray(risks) ? risks : Object.values(risks || {})
   return list.map(risk => {
-    if (risk?.key !== 'wear_spike') return risk
-    const presentation = wearSpikePresentation(category, categoryKey)
+    let presentation = null
+    if (risk?.key === 'wear_spike') presentation = wearSpikePresentation(category, categoryKey)
+    if (risk?.key === 'age_fluid_loss') {
+      presentation = {
+        label: 'Age-related fluid consumption',
+        detail: `Component age is increasing ${categoryFluid(categoryKey)} consumption.`,
+      }
+    }
+    if (risk?.key === 'fluid_neglect') {
+      const fluid = categoryFluid(categoryKey)
+      presentation = {
+        label: `Low ${fluid} level is accelerating fluid loss`,
+        detail: `Restore the ${fluid} to its correct level.`,
+      }
+    }
+    if (!presentation) return risk
     return { ...risk, scannerLabel: presentation.label, scannerDetail: presentation.detail }
   }).filter(risk => diagnosticRiskLabel(risk))
 }
